@@ -4,53 +4,72 @@
 library(tidyverse)
 library(lubridate)
 
+getwd()
+
 # Set WD if not working in an R project (you should be!)
-# setwd("C:/Users/TBRUSH/R/SPCS_R")
+# setwd("C:/")
 
 # Set project name
-proj_name <- "SPCS"
+proj_name <- "CWCS"
 
+# Set timezone as UTC if cameras don't account for DST, otherwise set as local tz
+tz <- "UTC"
 
 # 1. Standardize camera deployments
+# Extract database output to input/raw_data
 
-stations <- read_csv("raw_data/SPCS/stations.csv")
-camera_checks <- read_csv("raw_data/SPCS/camera_checks.csv")
-images <- read_csv("raw_data/SPCS/images.csv")
+stations <- read_csv(paste0("input/raw_data/",proj_name, "/stations.csv"))
+camera_checks <- read_csv(paste0("input/raw_data/",proj_name, "/camera_checks.csv"))
+images <- read_csv(paste0("input/raw_data/",proj_name, "/images.csv"))
+idents <- read_csv(paste0("input/raw_data/",proj_name,"/images_idents.csv"))
 
 deployment  <- full_join(camera_checks, stations, by = "station_id")
 head(deployment)
 
-# DELETE THE FOLLOWING STEP IF YEARS ARE CORRECT IN ORIG_FILE FIELD ->
 
-images$orig_file <- images$orig_file %>%
-  str_replace_all("2020", "2021")
+# get first and last image from each station
 
-#get first and last image from each station
-# derive date_time from orig_file to ensure wrong timestamps don't show up
+img_dates <- images %>%
+  mutate(date_time = as.POSIXct(timestamp_pst, tz=tz))
 
-first_last <- images %>%
-  separate(orig_file, c(NA, "year", "month", "day", "hour", "minute", "second"), extra = "drop") %>%
-  unite(date_time, c("day":"year", "hour":"second"), sep = "-", remove = FALSE)
+# if needed, can derive date_time from orig_file to ensure wrong timestamps don't show up (uncomment below)
 
-first_last$date_time <-
-  dmy_hms(first_last$date_time, tz = "UTC")
+# img_dates <- images %>%
+#   separate(orig_file, c(NA, "year", "month", "day", "hour", "minute", "second"), extra = "drop") %>%
+#   unite(date_time, c("day":"year", "hour":"second"), sep = "-", remove = FALSE)
+# 
+# img_dates$date_time <-
+#   dmy_hms(img_dates$date_time, tz = tz)
+
+summary(img_dates$date_time)
+
+# if any cameras had date set up wrong, fix below
+
+# get rid of COQ14
+
+img_dates <- img_dates %>%
+  filter(station_id != "COQ14")
+
+# COQ07 -> 877 days, 20 hrs behind until Oct 3
+img_dates <- img_dates %>%
+  mutate(date_time = if_else(station_id=="COQ07" & date_time < as.POSIXct("2019-10-03", tz = tz), 
+                                 date_time + (((877*24)+20)*60*60),
+# COQ04 -> year is 2018 instead of 2019 until Oct 3                                 
+                                 if_else(station_id=="COQ04" & date_time < as.POSIXct("2019-10-03", tz=tz),
+                                         as.POSIXct(str_replace(date_time, "2018", "2019"), tz = tz),
+                                         date_time))
+         )
+# make sure it looks right
+summary(img_dates$date_time)
 
 # find first and last images (will join to eff dataset)
-first_image <- first_last %>%
+first_image <- img_dates %>%
   group_by(station_id) %>%
-  slice_min(date_time) %>%
-  mutate(first_image = date_time) %>%
-  select(station_id, first_image)
-last_image <- first_last %>%
+  summarize(first_image = min(date_time))
+last_image <- img_dates %>%
   group_by(station_id) %>%
-  slice_max(date_time) %>%
-  mutate(last_image = date_time) %>%
-  select(station_id, last_image)
-first_last <- first_last %>%
-  distinct(station_id) %>%
-  full_join(first_image, by="station_id") %>%
-  full_join(last_image, by="station_id") %>%
-  select(station_id, first_image, last_image)
+  summarize(last_image = max(date_time))
+first_last <- full_join(first_image, last_image, by="station_id")
   
 deployment <- deployment %>%
   full_join(first_last, by="station_id")
@@ -72,7 +91,7 @@ deployment_short <- select(deployment,
                            camera_distance,
                            camera_status)
 
-write.csv(deployment_short, paste0("raw_data/",proj_name,"_deployment_data.csv"), row.names = F)
+write.csv(deployment_short, paste0("input/raw_data/",proj_name,"_deployment_data.csv"), row.names = F)
 
 
 # 2. Standardize station data
@@ -93,23 +112,14 @@ stations <- left_join(stations, treatment, by = "station_id")
 stations <- select(stations, -station_tbl_id)
 
 # Export to .csv
-write.csv(stations, paste0("raw_data/",proj_name,"_station_data.csv"), row.names = F)
+write.csv(stations, paste0("input/raw_data/",proj_name,"_station_data.csv"), row.names = F)
 
 
 # 3. Standardize identifications from database output
 
-idents <- read.csv("raw_data/SPCS/images_idents.csv")
+# derive correct timestamp from img_dates
 
-# DELETE THE FOLLOWING STEP IF YEARS ARE CORRECT IN ORIG_FILE FIELD ->
-
-idents$orig_file <- idents$orig_file %>%
-  str_replace_all("2020", "2021")
-
-# resume
-
-ud.dat <- idents
-
-
+ud.dat <- left_join(idents, img_dates[,c(2,30)], by="image_id")
 
 # rename to standardized columns
 # run 'colnames(ud.dat)' to see column names
@@ -119,31 +129,10 @@ ud.dat <- ud.dat %>%
   rename(age = age_category,
          count = species_count)
 
-# derive date_time from orig_file to ensure wrong timestamps don't show up in data
-ud.dat <- ud.dat %>%
-  separate(orig_file, c(NA, "year", "month", "day", "hour", "minute", "second"), extra = "drop") %>%
-  unite(date_time, c("day":"year", "hour":"second"), sep = "-", remove = FALSE)
-
-ud.dat$date_time <-
-  dmy_hms(ud.dat$date_time, tz = "UTC")
-
-ud.dat$month <- as.numeric(ud.dat$month)
-ud.dat$day <- as.numeric(ud.dat$day)
-ud.dat$hour <- as.numeric(ud.dat$hour)
-ud.dat$minute <- as.numeric(ud.dat$minute)
-ud.dat$second <- as.numeric(ud.dat$second)
-
-# find first and last images (will join to eff dataset)
-first_last <- ud.dat %>%
-  group_by(station_id) %>%
-  slice_min(date_time)
-
 # remove misfires and staff images
 # remove deleted rows
-ud.dat <- filter(ud.dat, deleted == "f")
-ud.dat$misfire[ud.dat$misfire=="f"] <- F
+ud.dat <- filter(ud.dat, deleted == F)
 ud.dat <- filter(ud.dat, misfire == F)
-ud.dat$staff[ud.dat$staff=="f"] <- F
 ud.dat <- filter(ud.dat, staff == F)
 
 # remove extraneous species column
@@ -151,16 +140,13 @@ ud.dat <- subset(ud.dat, select = -c(latin_name))
 
 # small standardizations
 ud.dat$`project_id` <- proj_name 
-ud.dat$time_zone <- NA
 ud.dat$time_zone <- "UTC-8" # Change if in different TZ
 
-ud.dat$collar[ud.dat$collar=="f"] <- F
-ud.dat$collar[ud.dat$collar=="t"] <- T
-ud.dat <- ud.dat %>%
-  mutate(group_count =
-           ifelse(ud.dat$group_count == 100, NA, group_count)) %>%
-  mutate(snow_cover =
-           ifelse(ud.dat$snow_cover == 100, NA, snow_cover))
+# ud.dat <- ud.dat %>%
+#   mutate(group_count =
+#            ifelse(ud.dat$group_count == 100, NA, group_count)) %>%
+#   mutate(snow_cover =
+#            ifelse(ud.dat$snow_cover == 100, NA, snow_cover))
 
 # pare down to desired columns only
 ud.dat <- select(ud.dat,
@@ -183,4 +169,4 @@ ud.dat <- select(ud.dat,
 
 
 # Write to csv
-write.csv(ud.dat, paste0("raw_data/",proj_name,"_detection_data.csv"), row.names = F)
+write.csv(ud.dat, paste0("input/raw_data/",proj_name,"_detection_data.csv"), row.names = F)
