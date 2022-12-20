@@ -3,8 +3,7 @@ title: "Elk Sightability Basic Report"
 subtitle: "An initial summary of camera trap data from June to September 2021 in the Sechelt Peninsula"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output: 
-  word_document:  
-    fig_width: 7
+  word_document:
 always_allow_html: TRUE
  
 ---
@@ -15,17 +14,16 @@ always_allow_html: TRUE
 #Read and run this chunk of code line by line in the R Console (do not press knit) - there are some questions below which you will have to answer and some logic tests to complete. Once you are happy that the conditions have been satisfied, hit 'knit' above. 
 
 # Load packages
-library(tidyverse)
-library(lubridate)
-library(PNWColors)
+list.of.packages <- c("leaflet", "dplyr", "colortools", "kriging", "corrplot", "lubridate", "kableExtra", "tidyr", "ggplot2", "gridExtra", "activity", "overlap", "webshot", "flextable",
+                      "PNWColors")
+
+# Check you have them and load them
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+lapply(list.of.packages, require, character.only = TRUE)
 
 # Load your data [change the files paths to your data locations]
-dat <- read.csv("raw_data/SPCS_detection_data.csv", header=T)
-eff <- read.csv("raw_data/SPCS_deployment_data.csv", header=T)
-sta <- read.csv("raw_data/SPCS_station_data.csv", header=T)
-
-# Create an output folder 
-dir.create("processed_data/")
+load("C:/Users/TBRUSH/R/SPCS_R/input/processed_data/SPCS_standard_input.RData")
 
 # Timezone [Use UTC if your cameras do not correct for daylight saving time, if they do use the timezone where the data was collected]
 tz <- "UTC"
@@ -33,157 +31,40 @@ tz <- "UTC"
 # Set the "independence" interval in minutes
 independent <- 30
 
-# Set a single categorical variable of interest from station covariates for summary graphs. If you do not have and appropriate category use "project_id".
-category <- "media_recovered"
+# Set a single categorical variable of interest from station covariates for summary graphs. If you do not have an appropriate category, use "project_id".
+category <- "project_id"
 
 # Define a colour palette from the package PNWColors
 # Can be viewed at https://github.com/jakelawlor/PNWColors#install-package
 pal <- "Bay"
 
-# Create a variable in dat that uses species names as you would use them in the report
-dat$report_names <- if_else(dat$species == "Ursus americanus",
-                            "Bears",
-                            if_else(dat$species == "Bird spp.", 
-                                    "Bird species",
-                                    if_else(dat$species == "Canis familiaris",
-                                            "Dogs",
-                                            if_else(dat$species == "Canis latrans",
-                                                    "Coyotes",
-                                                    if_else(dat$species == "Canis lupus",
-                                                            "Wolves",
-                                                            if_else(dat$species == "Cervus canadensis",
-                                                                    "Elk",
-                                                                    if_else(dat$species == "Lynx rufus",
-                                                                            "Bobcats",
-                                                                            if_else(dat$species == "Odocoileus hemionus",
-                                                                                    "Deer",
-                                                                                    if_else(dat$species == "Homo sapiens",
-                                                                                            "Humans",
-                                                                                            if_else(dat$species == "Procyon lotor",
-                                                                                                    "Raccoons",
-                                                                                                    if_else(dat$species == "Sylvilagus floridanus",
-                                                                                                            "Rabbits",
-                                                                                                            if_else(dat$species == "Felis catus",
-                                                                                                                    "Cats",
-                                                                                                                    if_else(dat$species == "Tamiasciurus douglasii", 
-                                                                                                                          "Squirrels",
-                                                                                                                          "Unknown species"
-)))))))))))))
-
-
 # Set focal species (those you want to include in in-depth analysis) and irrelevant species(those you want to exclude from basic results like sex, age, behaviour)
-irr_spe <- c("Humans","Dogs","Cats","Unknown species")
-foc_spe <- c("Elk", "Deer", "Bears")
+irr_spe <- c("Humans","Dogs","Cats","Unknown species", "Mice", "Birds")
+foc_spe <- c("Elk", "Deer", "Bears", "Bobcats", "Coyotes", "Wolves")
 
 # Set species which you want collar/tag data for
 mrk_spe <- "Elk"
 
-# set ret_dat to window of retrieval dates (e.g. retrieved in September 2021 would be "2021-09")
-# can use "|" if spans multiple months (e.g. ret_dat <- "2021-09" | "2021-10")
-ret_dat <- "2021-09"
+# Set your season dates if you don't have them already or want to change them for this report
 
-##############################################################
-##### DATA TESTS #############################################
-##############################################################
+ind.dat <- ind.dat %>%
+  mutate(month = month(date_time)) %>%
+  mutate(season = if_else(month >= 5 & month <= 10, "Summer", "Winter")) %>%
+  select(-month)
 
-# This code will not work unless your data passes the following checks
-
-#Load Packages
-list.of.packages <- c("leaflet", "dplyr", "colortools", "kriging", "corrplot", "lubridate", "kableExtra", "tidyr", "ggplot2", "gridExtra", "activity", "overlap", "webshot", "flextable")
-
-# Check you have them and load them
-new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
-if(length(new.packages)) install.packages(new.packages)
-lapply(list.of.packages, require, character.only = TRUE)
-
-# 1) dat$misfire and eff$media_recovered must be logical
-is.logical(dat$misfire)
-is.logical(eff$media_recovered)
-# If one is FALSE convert column to TRUE/FALSE
-# If you don't have a misfire column and all of you data have animals in them, run the following:
-# dat$misfire <- FALSE
-
-# 2) All dates must be in YYYY-MM-DD in 'eff' and YYYY-MM-DD HH:MM:SS in 'dat' 
-# If the following return NA, change your formatting
-
-as.Date(ymd(eff$check_date[1]))
-sto <- eff %>%
-  filter(!is.na(stop_date))
-as.Date(ymd(sto$stop_date))
-ymd_hms(dat$date_time[1])
-# !!WE NEED TO TAKE DAT DATE/TIME FROM ORIG_FILE
-
-# 3) the dates in 'eff$stop_date' must be the when the camera fails, not when you check the camera. If the camera fails (due to damage or full sd card), use the last day it functions here.
-
-# 4) Ensure your species names are consistent - check in the list below
-table(dat$species)
-
-# 5) Ensure group_count and species_count doesn't have any non-numeric data in it. The following should return TRUE
-is.numeric(dat$group_count)
-is.numeric(dat$count)
-
-# 6) separate check_dates into deployment and retrieval dates and ensure all deployment dates are before retrieval dates for each deployment
-
-# Separate deployment from retrieval
-deployment <- eff %>%
-  arrange(check_date) %>%
-  distinct(station_id, .keep_all = TRUE) %>%
-  mutate(start_date = check_date) %>%
-  select(station_id, start_date)
-retrieval <- eff %>%
-  filter(str_detect(check_date, ret_dat)) %>%
-  mutate(retrieval_date = check_date) %>%
-  select(station_id, retrieval_date)
-eff <- eff %>%
-  group_by(station_id) %>%
-  slice_max(check_date) %>%
-  left_join(deployment, by = "station_id") %>%
-  left_join(retrieval, by = "station_id") %>%
-  select(!check_date)
-
-# Logic = stations should be active for 0 or more days -> count of TRUE should equate n of rows in retrieval dataframe
-table((strptime(eff$retrieval_date, "%Y-%m-%d", tz="UTC")-strptime(eff$start_date, "%Y-%m-%d", tz="UTC"))>=0)
-
-# 7) Do you have lat/long data for all of your sites you have eff data for? If yes, both should return FALSE
-anyNA(sta$latitude)
-anyNA(sta$longitude)
-# If TRUE, check sta to see where lat/long data is missing!
-
-# If all of the above is satisfied -> press 'Knit' above ^
+seas.eff <- row.lookup %>%
+  mutate(month = month(date)) %>%
+  mutate(season = if_else(month >= 5 & month <= 10, "Summer", "Winter")) %>%
+  group_by(station_id, season) %>%
+  summarize(days = n())
 
 ```
 
 
 ```{r non-adjustable options, echo=F, include=F}
-# Prepare dates
-ymd(eff$start_date[1])
-ymd_hms(dat$date_time[1],truncated=2)
-
-eff$start_date <- strptime(as.Date(ymd_hms(eff$start_date, truncated=3, tz=tz)), "%Y-%m-%d", tz=tz)
-eff$retrieval_date <- strptime(as.Date(ymd_hms(eff$retrieval_date, truncated=3, tz=tz)), "%Y-%m-%d", tz=tz)
-eff$stop_date   <- strptime(as.Date(ymd_hms(eff$stop_date, truncated=3, tz=tz)), "%Y-%m-%d", tz=tz)
-
-eff <- eff %>%
-  mutate(end_date = if_else(is.na(stop_date), retrieval_date, stop_date)) %>%
-  select(!c(stop_date, retrieval_date))
-eff$days <- as.numeric(round(difftime(eff$end_date, eff$start_date, units="days"),1))
-eff$first_image <- as_datetime(eff$first_image)
-eff$last_image <- as_datetime(eff$last_image)
-eff$hours <- as.numeric(round(difftime(eff$last_image, eff$first_image, units="hours", 1)))
-
-dat$date_time <- ymd_hms(dat$date_time, truncated=2, tz=tz)
 
 # Count the number of camera stations
 n_sta <- length(unique(eff$station_id))
-
-# Count number of stations images were recovered from
-n_rec <- eff %>%
-  filter(media_recovered == T) %>%
-  select(station_id, media_recovered)
-sta <- left_join(sta, n_rec)
-sta <- sta %>%
-  mutate(media_recovered = if_else(is.na(media_recovered), F, T))
-n_rec <- nrow(n_rec)
 
 # Generate colours to display the category levels - R needs them as a factor
 sta[,category] <- factor(sta[,category])
@@ -240,348 +121,129 @@ getmode <- function(v) {
 
 ## Camera Field Study
 
-Cameras were deployed in June 2021 at `r n_sta` unique locations. For this analysis, images were recovered from `r n_rec` of these stations in September 2021.
+Cameras were deployed in June 2021 at `r n_sta` unique locations.
 
-```{r map, echo=F, fig.width=5, fig.cap= "A map of camera deployment sites (stations), categorized by whether images were recovered from the site in September 2021."}
+```{r map, fig.height=8, fig.width=6, echo=F, fig.cap= "Camera deployment sites."}
 
 m <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="satellite") %>%  # Add satellite data
   
-  addCircleMarkers(lng = sta$longitude, 
+  addCircles(lng = sta$longitude, 
                    lat = sta$latitude,
-                   color = "white", radius = 4, 
-                   stroke = "white", opacity = 1,
-                   weight=1, fillColor = sta$cols, 
+                   color = "white", radius = 250, 
+                   opacity = 1,
+                   weight=0.5, fillColor = col.cat[1], 
                    fillOpacity = 1,
-                   label = paste(sta$station_id)) %>%
- addLegend("bottomleft", colors = col.cat,  
-           labels = str_to_sentence(levels(sta[,category]), 
-                                    locale = "en"),
-           title = str_to_sentence(category),
-           labFormat = labelFormat(prefix = "$"), 
-           opacity = 1)
+                   label = paste(sta$station_id))
+ # addLegend("bottomleft", colors = col.cat,  
+ #           labels = str_to_sentence(levels(sta[,category]), 
+ #                                    locale = "en"),
+ #           title = str_to_sentence(category),
+ #           labFormat = labelFormat(prefix = "$"), 
+ #           opacity = 1)
+
 m
 
 ```
 
 # Results
-## Camera Surveys
 
-### Raw Camera Detections
+## Raw Camera Detections
 
 To date, `r nrow(dat)` images have undergone classification by species, sex, age, behaviour, and groups size. In total, `r length(levels(factor(dat$species)))-1` species were detected (excluding unknown species). The following figure summarizes detections by species.
 
-```{r captures, echo=F}
+```{r detections, echo=F, fig.height=sp.height, fig.width=6}
 layout(matrix(c(1,1,2), 1, 3, byrow = TRUE))
-det.sum.total <- as.data.frame(count(dat[dat$misfire==FALSE & is.na(dat$species)==FALSE,], report_names))
+det.sum.total <- as.data.frame(count(dat[is.na(dat$species)==FALSE,], report_names))
 det.sum.total <- det.sum.total[order(det.sum.total$n),]
 
-par(mar=c(5,16,1,1))
-barplot(det.sum.total$n, names.arg = paste0(det.sum.total$report_names, 
-                                           " (n =", det.sum.total$n,")")   , las=1, cex.names=1, xlab="Total detections", horiz=T)
 i <-1
 for(i in 1:nrow(det.sum.total))
 {
   tmp <- subset(dat, report_names==det.sum.total$report_names[i])
   det.sum.total$locations[i] <- length(unique(tmp$station_id))
 }
+
+par(mar=c(5,16,1,1))
+barplot(det.sum.total$n, names.arg = paste0(det.sum.total$report_names, 
+                                           " (n = ", det.sum.total$n, ", ",
+                                           round((det.sum.total$locations/n_sta)*100),
+                                           "%)"), 
+        las=1, cex.names=1, xlab="Total detections", horiz=T)
+
 par(mar=c(5,1,1,1))
 
-barplot(det.sum.total$locations/n_rec, las=1, cex.names=0.9, xlab="Proportion of sites detected", horiz=T, xlim=c(0,1))
+barplot(det.sum.total$locations/n_sta, las=1, cex.names=1, xlab="Proportion of sites detected", horiz=T, xlim=c(0,1))
 abline(v=1, lty=2)
 
-```
-
-**Species data**
-
-The following data pertains only to wildlife detections (i.e. excluding `r irr_spe` detections). Definitions of all sex, age, and behaviour classifications can be found in the appendix.
-
-*Sex*
-
-For deer and elk, sex was determined by the presence or absence of antlers. Bears were classified as 'unknown' sex unless they appeared with juveniles, in which case they were classified as females. For all other species, sex was assumed to be unknown. Juveniles of all species were classified as 'unknown' sex. One sex classification was assigned to each sequence of images (hereafter 'events') based on the composition of the group. 
-
-```{r sex, echo=F, include=F}
-col.name <- "sex"
-
-plot<-FALSE
-if(length(colnames(dat)[colnames(dat)==col.name]>0))
-   {
-      tmp <- table(dat[,col.name][dat$misfire==FALSE], as.character(dat$report_names[dat$misfire==FALSE]))
-      tmp <- as.data.frame.matrix(tmp)
-      tmp <- tmp[ , !(names(tmp) %in% irr_spe)]
-      
-      dat[,col.name]<- factor(dat[,col.name]) %>%
-        droplevels()
-      cols <- pnw_palette(pal, length(levels(dat[,col.name])))
-      # Name categories with no data N\A for NOT ASSESSED
-row.names(tmp)[row.names(tmp)==""] <- "N/A"
-      # make it the last level
-tmp <- tmp[c(2:nrow(tmp),1),]
-      
-      data_percentage <- apply(tmp, 2, function(x){x*100/sum(x,na.rm=T)})
-      plot<-TRUE
-  }
 
 ```
 
 
-```{r sex plot, echo=F, fig.height=sp.height}
-if(plot==TRUE)
-{
-layout(matrix(c(1,1,1,2), 1, 4, byrow = TRUE))
-par(mar=c(5,10,1,1))
-barplot(data_percentage , border="white",col= cols, ylab="", las=1, xlab="% of observations", cex.names=0.9, horiz=2)
-par(mar=c(0,0,4,0))
-plot.new()
-legend("topleft", legend=row.names(tmp), fill=cols, xpd=TRUE, cex=1.1 )
-} else { print('Not included') }
-```
+**Detection Map**
 
-*Age*
-
-Age was determined using size and the presence of adult characteristics (e.g. antlers). For animals without obvious adult features, size was the primary determinate. In instances where individuals appeared alone and age was unclear, the animal was assumed to be an adult. Individuals were classified as juvenile only if they appeared to be under 1 year old, otherwise they were classified as adults. 
-Like sex, age was classified based on the group composition of the event, rather than by individual image. 'Adult' classifications imply that only adults were present in an event. 'Juvenile' means that only juveniles were present. 'Adult + Juvenile' was applied if both adults and juveniles were present in an event. 
-
-```{r age, echo=F, include=F}
-col.name <- "age"
-
-plot<-FALSE
-if(length(colnames(dat)[colnames(dat)==col.name]>0))
-   {
-      tmp <- table(dat[,col.name][dat$misfire==FALSE], as.character(dat$report_names[dat$misfire==FALSE]))
-      tmp <- as.data.frame.matrix(tmp)
-      tmp <- tmp[ , !(names(tmp) %in% irr_spe)]
-      
-      dat[,col.name]<- factor(dat[,col.name])
-      cols <- pnw_palette(pal, length(levels(dat[,col.name])))
-      # Name catagories with no data N\A for NOT ASSESSED
-      row.names(tmp)[row.names(tmp)==""] <- "N/A"
-      # make it the last level
-      tmp <- tmp[c(2:nrow(tmp),1),]
-      
-      data_percentage <- apply(tmp, 2, function(x){x*100/sum(x,na.rm=T)})
-      plot<-TRUE
-  }
-
-```
-
-```{r age plot, echo=F, fig.height=sp.height}
-if(plot==TRUE)
-{
-layout(matrix(c(1,1,1,2), 1, 4, byrow = TRUE))
-par(mar=c(5,10,1,1))
-barplot(data_percentage , border="white",col= cols, ylab="", las=1, xlab="% of observations", cex.names=0.9, horiz=2)
-par(mar=c(0,0,4,0))
-plot.new()
-legend("topleft", legend=row.names(tmp), fill=cols, xpd=TRUE, cex=1.1 )
-} else { print('Not included') }
-
-```
-
-*Behaviour*
-
-Behaviour classifications reflect the most prevalent behaviour in an event. Definitions of the most common behaviours are listed below.
-
-* Traveling: the individual has its head raised or at a neutral position and is either moving or standing still.
-* Foraging: the individual's head is close to the ground or vegetation, may be standing still or moving slowly.
-* Inspecting camera: the individual is less than a metre away from the camera and appears in images with its face or paw very close to the lens.
-
-```{r Behaviour, echo=F, include=F}
-col.name <- "behaviour"
-plot<-FALSE
-if(length(colnames(dat)[colnames(dat)==col.name]>0))
-   {
-      tmp <- table(dat[,col.name][dat$misfire==FALSE& !(dat$report_names %in% irr_spe)], as.character(dat$report_names[dat$misfire==FALSE & !(dat$report_names %in% irr_spe)]))
-      tmp <- as.data.frame.matrix(tmp)
-      tmp$total <- rowSums(tmp)
-      tmp <- tmp[tmp$total != 0 , 1:10]
-
-      
-      dat[,col.name]<- factor(dat[,col.name])
-      cols <- pnw_palette(pal, nrow(tmp))
-      # Name catagories with no data N\A for NOT ASSESSED
-      # row.names(tmp)[row.names(tmp)==""] <- "N/A"
-      # make it the last level
-      # tmp <- tmp[c(2:nrow(tmp),1),]
-      
-      data_percentage <- apply(tmp, 2, function(x){x*100/sum(x,na.rm=T)})
-      plot<-TRUE
-  }
-```
-
-```{r behaviour plot, echo=F, fig.height=sp.height}
-if(plot==TRUE)
-{
-layout(matrix(c(1,1,1,2), 1, 4, byrow = TRUE))
-par(mar=c(5,10,1,1))
-barplot(data_percentage , border="white",col= cols, ylab="", las=1, xlab="% of observations", cex.names=0.9, horiz=2)
-par(mar=c(0,0,4,0))
-plot.new()
-legend("topleft", legend=row.names(tmp), fill=cols, xpd=TRUE, cex=1.1 )
-} else { print('Not included') }
-```
-
-**Location data**
-
-```{r detection map, echo=F, fig.width=5, fig.cap="A map of stations from which images were recovered. Circle size corresponds to the number of images recovered from the site."}
+```{r detection map, fig.width=6, fig.height=8, echo=F, fig.cap="A map of stations from which images were recovered. Circle size corresponds to the number of images recovered from the site."}
 
 sta.det <- dat %>%
   filter(!(report_names %in% c(irr_spe))) %>%
   group_by(station_id) %>%
-  summarize(det = n())
-sta.det$det <- as.character(sta.det$det)
+  summarize(det = n()) %>%
+  distinct() %>%
+  left_join(eff %>% select(-latitude, -longitude), by="station_id") %>%
+  mutate(cr = det/days*100)
+
 sta.det <- full_join(sta, sta.det, by = "station_id")
+
+scale <- 2
 
 m_det <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
-    
   addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
-             radius=(as.numeric(sta.det$det)*2),
-             weight=1, fillOpacity = 0.8,
-             color=cols[1],
+             radius=as.numeric(sta.det$cr)*scale,
+             weight=1, fillOpacity = 0.6,
+             color=col.cat[1],
               label=paste(sta.det$station_id, 
-                         sta.det$det, sep=", "))
+                         sta.det$det, sep=", ")) %>%
+  addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white")
+  
 m_det
 
 ```
 
-### Independent camera detections
-
-```{r indepedents, echo=F, eval=T, message = F, warning = F}
-# Remove observations without animals detected
-dat <- dat[dat$misfire==FALSE & is.na(dat$species)==FALSE,]
-dat$species <- as.character(dat$species)
-dat$station_id <- as.character(dat$station_id)
-
-# Order the datframe by Site, date
-dat <- dat[order(dat$station_id, dat$date_time),]
-
-
-  dat <- dat %>%
-  #filter(species == i) %>%
-  arrange(project_id,station_id) %>%
-  group_by(station_id, species) %>%
-  mutate(duration = int_length(date_time %--% lag(date_time)))
-
-# loop that assign group ID
-dat$event_id <- 9999
-  mins <- independent
-  seq <- as.numeric(paste0(nrow(dat),0))
-  seq <- round(seq,-(nchar(seq)))
-for (i in 2:nrow(dat)) {
-  dat$event_id[i-1]  <- paste0("E",format(seq, scientific = F))
-  if(is.na(dat$duration[i]) | abs(dat$duration[i]) > (mins * 60)){
-    seq <- seq + 1
-  }
-}
-
-# Update the information for the last row
-    # group ID  for the last row
- if(dat$duration[nrow(dat)] < (mins * 60)|
-    is.na(dat$duration[nrow(dat)])){
-   dat$event_id[nrow(dat)] <- dat$event_id[nrow(dat)-1]
- } else{
-   dat$event_id[nrow(dat)] <- paste0("E",format(seq+1, scientific = F))
- }
-  
-# If one image in an event has collar = T, make all images in that event collar = T.
-  dat <- dat %>% 
-    group_by(event_id) %>%
-    mutate(collar = if_else(any(collar), T, F))
-  
-# If there is no minimum groupsize take number of animals
-if(!"group_count" %in% colnames(dat)) {dat$group_count <- dat$count}
-
-# Calculate the event length and size
-
-  # find out the last and the first of the time in the group
-  top <- dat %>% group_by(event_id) %>% top_n(1,date_time) %>% select(event_id, date_time)
-  bot <- dat %>% group_by(event_id) %>% top_n(-1,date_time) %>% select(event_id, date_time)
-  names(bot)[2] <- c("date_time_end")
-  dec_no <- dat %>% group_by(event_id) %>% summarise(n())
-  event_grp <- dat %>% group_by(event_id) %>% summarise(max(group_count))
-
-  # caculate the duration
-  diff <-  top %>% left_join(bot, by="event_id") %>%
-      mutate(duration=abs(int_length(date_time %--% date_time_end))) %>%
-      left_join(event_grp, by="event_id")%>%
-      left_join(dec_no, by="event_id")
-
-  # Remove duplicates
-  diff <- diff[duplicated(diff)==FALSE,]
-
-  names(diff) <- c("event_id","date_time_end","date_time_start","event_duration","event_groupsize","event_observations")
-  diff$date_time_end<-NULL;diff$date_time_start<-NULL
-  dat$duration <-NULL
-  # Merge the data
-  dat <-  dat %>%
-   left_join(diff,by="event_id")
-
-# Subset to the first observation in each event
-
-  # Subset to independent observations using your chosen threshold
-ind.dat <- dat[!duplicated(dat$event_id),]
-ind.dat <- as.data.frame(ind.dat)
-ind.dat$report_names <-as.factor(ind.dat$report_names)
-
-
-# Remove all observations with occur outside of camera activity schedules
-# We need to know how many detections there are in each month -> create a row lookup
-# This is just a list of ever day a camera was active.
-
-tmp <- eff[is.na(eff$end_date)==F,]
-daily.lookup <- list()
-for(i in 1:nrow(tmp))
-{
-  if(as.Date(tmp$start_date[i])!=as.Date(tmp$end_date[i]))
-  {
-    daily.lookup[[i]] <- data.frame("date"=seq(as.Date(tmp$start_date[i]), as.Date(tmp$end_date[i]), by="days"), "station_id"=tmp$station_id[i])
-  }
-}
-row.lookup <- do.call(rbind, daily.lookup)
-
-# Remove duplicates
-row.lookup <- row.lookup[duplicated(row.lookup)==F,]
-
-
-# Make a dat/location lookup
-tmp <- row.lookup
-tmp <- paste(tmp$date, tmp$station_id)
-
-#Subset ind.dat to data that only occurs when a camera is active
-ind.dat <- ind.dat[paste(as.Date(ind.dat$date_time), ind.dat$station_id) %in% tmp, ]
-# Reset the factor levels
-ind.dat$report_names <- factor(ind.dat$report_names)
-
-# Save it for a rainy day
-write.csv(ind.dat, paste0("processed_data/",dat$project_id[1], "_",independent ,"min_Independent.csv"), row.names = F)
-
-# Also export the effort lookup
-write.csv(row.lookup, paste0("processed_data/",dat$project_id[1], "_daily_effort_lookup.csv"), row.names = F)
-
-```
+## Independent camera detections
 
 Using an independence threshold of `r independent` minutes, the number of independent capture events is `r nrow(ind.dat)`. The rest of the analyses are conducted with this data. A summary of image events is as follows:
 
-```{r ind captures, echo=F, eval=T, fig.height=sp.height}
+```{r ind detections figure, echo=F, eval=T, fig.width=6, fig.height=sp.height}
 
 layout(matrix(c(1,1,2), 1, 3, byrow = TRUE))
-ind.det.sum.total <- as.data.frame(count(ind.dat[ind.dat$misfire==FALSE,], report_names))
+ind.det.sum.total <- as.data.frame(count(ind.dat, report_names))
 ind.det.sum.total <- ind.det.sum.total[order(ind.det.sum.total$n),]
+ind.det.sum.total <- left_join(ind.det.sum.total, det.sum.total[,c(1,3)], by="report_names")
+
+i <-1
+for(i in 1:nrow(ind.det.sum.total))
+{
+  tmp <- subset(ind.dat, report_names==ind.det.sum.total$report_names[i])
+  ind.det.sum.total$animal_count[i] <- sum(tmp$event_groupsize)
+}
 
 par(mar=c(5,16,1,1))
 barplot(ind.det.sum.total$n, names.arg = paste0(ind.det.sum.total$report_names,
-                                           " (n =", ind.det.sum.total$n,")"), 
-        las=1, cex.names=1, xlab="Total independent detections", horiz=T)
-i <-1
-for(i in 1:nrow(det.sum.total))
-{
-  tmp <- subset(ind.dat, report_names==ind.det.sum.total$report_names[i])
-  ind.det.sum.total$locations[i] <- length(unique(tmp$station_id))
-}
+                                           " (n = ", ind.det.sum.total$n, ", ",
+                                           # ind.det.sum.total$animal_count, ",", 
+                                           round(ind.det.sum.total$locations/n_sta*100), "%)"),
+        las=1, cex.names=1, xlab="Total independent detections", horiz=T,
+        xlim=c(0,2500))
+
 par(mar=c(5,1,1,1))
 
-barplot(det.sum.total$n/ind.det.sum.total$n, las=1, cex.names=0.9, xlab="Average images per event", horiz=T, xlim=c(0,25))
+
+barplot(ind.det.sum.total$animal_count, las=1, cex.names=1, xlab="Total animals counted", horiz=T, xlim = c(0,3000))
+
 
 ```
 
@@ -591,7 +253,7 @@ col.name <- "sex"
 plot<-FALSE
 if(length(colnames(ind.dat)[colnames(ind.dat)==col.name]>0))
    {
-      tmp <- table(ind.dat[,col.name][ind.dat$misfire==FALSE], as.character(ind.dat$report_names[ind.dat$misfire==FALSE]))
+      tmp <- table(ind.dat[,col.name], as.character(ind.dat$report_names))
       tmp <- as.data.frame.matrix(tmp)
       tmp <- tmp[ , !(names(tmp) %in% irr_spe)]
       
@@ -610,7 +272,7 @@ tmp <- tmp[c(2:nrow(tmp),1),]
 ```
 
 
-```{r sex plot ind, echo=F, fig.height=sp.height}
+```{r sex ind plot, echo=F, fig.width=6, fig.height=sp.height}
 if(plot==TRUE)
 {
 layout(matrix(c(1,1,1,2), 1, 4, byrow = TRUE))
@@ -628,7 +290,7 @@ col.name <- "age"
 plot<-FALSE
 if(length(colnames(ind.dat)[colnames(ind.dat)==col.name]>0))
    {
-      tmp <- table(ind.dat[,col.name][ind.dat$misfire==FALSE], as.character(ind.dat$report_names[ind.dat$misfire==FALSE]))
+      tmp <- table(ind.dat[,col.name], as.character(ind.dat$report_names))
       tmp <- as.data.frame.matrix(tmp)
       tmp <- tmp[ , !(names(tmp) %in% irr_spe)]
       
@@ -645,7 +307,7 @@ if(length(colnames(ind.dat)[colnames(ind.dat)==col.name]>0))
 
 ```
 
-```{r age plot ind, echo=F, fig.height=sp.height}
+```{r age ind plot, echo=F, fig.width=6, fig.height=sp.height}
 if(plot==TRUE)
 {
 layout(matrix(c(1,1,1,2), 1, 4, byrow = TRUE))
@@ -663,7 +325,7 @@ col.name <- "behaviour"
 plot<-FALSE
 if(length(colnames(ind.dat)[colnames(ind.dat)==col.name]>0))
    {
-      tmp <- table(ind.dat[,col.name][ind.dat$misfire==FALSE& !(ind.dat$report_names %in% irr_spe)], as.character(ind.dat$report_names[ind.dat$misfire==FALSE & !(ind.dat$report_names %in% irr_spe)]))
+      tmp <- table(ind.dat[,col.name][!(ind.dat$report_names %in% irr_spe)], as.character(ind.dat$report_names[!(ind.dat$report_names %in% irr_spe)]))
       tmp <- as.data.frame.matrix(tmp)
       tmp$total <- rowSums(tmp)
       tmp <- tmp[tmp$total != 0 , 1:10]
@@ -681,7 +343,7 @@ if(length(colnames(ind.dat)[colnames(ind.dat)==col.name]>0))
   }
 ```
 
-```{r behaviour plot ind, echo=F, fig.height=sp.height}
+```{r behaviour ind plot, echo=F, fig.width=6, fig.height=sp.height}
 if(plot==TRUE)
 {
 layout(matrix(c(1,1,1,2), 1, 4, byrow = TRUE))
@@ -694,25 +356,34 @@ legend("topleft", legend=row.names(tmp), fill=cols, xpd=TRUE, cex=1.1 )
 ```
 **Independent detection map**
 
-```{r independent detection map, echo=F, fig.width=5}
+```{r independent map, fig.width=6, fig.height=8, echo=F}
 
 sta.deti <- ind.dat %>%
   filter(!(report_names %in% c(irr_spe))) %>%
   group_by(station_id) %>%
-  summarize(det = n()) %>%
-  mutate(det = 15*det)
-sta.deti$det <- as.character(sta.deti$det)
+  summarize(det = n(),
+            animals = sum(event_groupsize)) %>%
+  distinct() %>%
+  left_join(eff %>% select(-latitude, -longitude), by="station_id") %>%
+  mutate(cr = det/days*100)
+
 sta.deti <- full_join(sta, sta.deti, by = "station_id")
+
+scale <- 15
 
 m_deti <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
    
   addCircles(lng=sta.deti$longitude, lat=sta.deti$latitude,
-             radius=as.numeric(sta.deti$det),
-             weight=1, fillOpacity = 0.8,
-             color=cols[1],
+             radius=as.numeric(sta.deti$cr)*scale,
+             weight=1, fillOpacity = 0.6,
+             color=col.cat[1],
              label=paste(sta.deti$station_id, 
-                         sta.deti$det, sep=", "))
+                         sta.deti$det, sep=", ")) %>%
+    addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white")
 m_deti
 
 ```
@@ -722,7 +393,7 @@ m_deti
 
 This plot shows the co variance between different species at the site level for species with >5 unique detections. A positive value indicates that the two species commonly occur at the same sites, while a negative value indicates that the two species are rarely present at the same site.
 
-```{r covariance, echo=F, fig.height=sp.height, eval=T}
+```{r covariance, echo=F, fig.width=6, fig.height=sp.height, eval=T}
 par(mfrow=c(1,1))
 tmp <- as.data.frame.matrix(table(ind.dat$station_id, ind.dat$report_names))
 tmp <- tmp[colSums(tmp)>5]
@@ -744,64 +415,57 @@ corrplot(M, method="color", col=rev(pnw_palette(pal, 100, type="continuous")),
 
 **Distance sampling**
 
-```{r distance images, echo=F, fig.height=3.5}
+```{r distance hist, fig.width=6, fig.height=3.5}
 # Filter to focal species
 dist <- dat %>%
-  filter(!is.na(snow_cover),
+  filter(!is.na(distance),
          report_names %in% c(foc_spe))
 dist %>%
-  ggplot(aes(snow_cover)) +
+  ggplot(aes(distance)) +
   geom_histogram(color="white", binwidth = 1) +
-  facet_wrap(~report_names) +
+  facet_wrap(~report_names, scales = "free") +
   labs(x = "Distance to camera (m)", y = "Frequency")
 ```
 
-```{r elk distance events, echo=F, fig.height=3.5}
-# Filter to focal species
-dist.elk <- ind.dat %>%
-  filter(!is.na(snow_cover),
-         report_names == "Elk")
+#### Elk
 
-dist.elk.rep <- data.frame(lapply(dist.elk, rep, dist.elk$group_count))
-
-dist.elk.rep %>%
-  ggplot(aes(snow_cover)) +
-  geom_histogram(color="white", binwidth = 2, breaks=seq(1, 15, by = 2)) +
-  labs(x = "Distance to camera (m)", y = "Frequency")
-```
 **Group size distribution**
 
-```{r group size, echo=F, eval=T, fig.height=3}
+```{r group size, echo=F, eval=T, fig.width=6, fig.height=4}
 ind.dat %>%
-  group_by(report_names) %>%
-  filter(report_names %in% foc_spe) %>%
+  filter(report_names == "Elk") %>%
+  group_by(sex) %>%
   summarize(mean_group = mean(group_count),
             sd = sd(group_count),
             n = n(),
             st_err = sd/sqrt(n)) %>%
-  ggplot(aes(report_names, mean_group)) +
+  ggplot(aes(sex, mean_group)) +
   geom_col() +
   scale_x_discrete(name="") +
-  scale_y_continuous(name="Average group size", breaks = c(0,1,2,3), labels = 0:3) +
+  scale_y_continuous(name="Average group size") +
   coord_flip() +
-  geom_errorbar(aes(x = report_names, 
+  geom_errorbar(aes(x = sex, 
                     ymin = mean_group - st_err, 
                     ymax = mean_group + st_err))
 
 ```
 
-**Elk**
+**Detection maps**
 
-```{r elk detection map, echo=F, fig.width=5, message=FALSE, warning=FALSE}
+```{r elk detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
 
 sta.det.elk <- ind.dat %>%
   filter(report_names=="Elk") %>%
   group_by(station_id) %>%
-  summarize(det = n()) %>%
+  summarize(det = n(),
+            animals = sum(event_groupsize)) %>%
   distinct() %>%
-  mutate(det = 80*det)
-sta.det.elk$det <- as.character(sta.det.elk$det)
+  left_join(eff %>% select(-latitude, -longitude), by="station_id") %>%
+  mutate(cr = det/days*100)
+
 sta.det.elk <- inner_join(sta, sta.det.elk, by = "station_id")
+
+scale <- 100
 
 m_det.elk <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
@@ -809,43 +473,56 @@ m_det.elk <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomCont
   addCircles(lng=sta.det.elk$longitude,
              lat=sta.det.elk$latitude,
              color=pnw_palette(pal, 1),
-             radius=as.numeric(sta.det.elk$det),
+             radius=as.numeric(sta.det.elk$cr)*scale,
              weight=1, fillOpacity = 0.7,
              label=paste(sta.det.elk$station_id, 
-                         sta.det.elk$det, sep=", "))
+                         sta.det.elk$det, sep=", ")) %>%
+    addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white")
 m_det.elk
 
 ```
 
-```{r elk age detection map, echo=F, fig.width=5, message=FALSE, warning=FALSE}
+```{r elk age detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
 
 age.det.elk <- ind.dat %>%
   filter(report_names=="Elk") %>%
   group_by(station_id, age) %>%
   summarize(det = n()) %>%
   distinct() %>%
-  mutate(det = 120*det)
-age.det.elk$det <- as.character(age.det.elk$det)
+  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
+  mutate(cr = det/days*100)
+
 age.det.elk <- inner_join(sta,age.det.elk, by = "station_id")
 cols <- pnw_palette(pal, 2)
+
+scale <- 100
 
 m_age.elk <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
    
   addCircles(lng=age.det.elk$longitude[age.det.elk$age=="Adult"],
              lat=age.det.elk$latitude[age.det.elk$age=="Adult"],
-             radius=as.numeric(age.det.elk$det[age.det.elk$age=="Adult"]), color=cols[1],
+             radius=as.numeric(age.det.elk$cr[age.det.elk$age=="Adult"])*scale,
+             color=cols[1],
              weight=1, fillOpacity = 0.5,
              label=paste(age.det.elk$station_id, 
                          age.det.elk$det, sep=", ")) %>%
 
   addCircles(lng=age.det.elk$longitude[age.det.elk$age=="Adult + Juvenile"],
              lat=age.det.elk$latitude[age.det.elk$age=="Adult + Juvenile"],
-             radius=as.numeric(age.det.elk$det[age.det.elk$age=="Adult + Juvenile"]),
+             radius=as.numeric(age.det.elk$cr
+                               [age.det.elk$age=="Adult + Juvenile"])*scale,
              weight=1, fillOpacity = 0.5,
              color=cols[2],
              label=paste(age.det.elk$station_id, 
                          age.det.elk$det, sep=", ")) %>%
+    addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white") %>%
   addLegend("bottomleft", colors = c(cols),  
            labels = c("Adults", "Adults + Juveniles"),
            title = "Age category",
@@ -856,60 +533,179 @@ m_age.elk
 
 ```
 
-**Deer**
+```{r elk seasonal detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+seas.elk <- ind.dat %>%
+  filter(report_names=="Elk") %>%
+  group_by(station_id, season) %>%
+  summarize(det = n()) %>%
+  distinct() %>%
+  left_join(seas.eff, by=c("station_id", "season")) %>%
+  mutate(cr = det/days*100)
 
-```{r deer detection map, echo=F, fig.width=5, message=FALSE, warning=FALSE}
+seas.elk <- inner_join(sta,seas.elk, by = "station_id")
+
+scale <- 80
+
+m_summer.elk <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
+  addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>% 
+   
+  addCircles(lng=seas.elk$longitude[seas.elk$season=="Summer"],
+             lat=seas.elk$latitude[seas.elk$season=="Summer"],
+             radius=as.numeric(seas.elk$cr[seas.elk$season=="Summer"])*scale,
+             weight=0.5, fillOpacity = 0.5, fillColor=cols[2], color=cols[2],
+             label=paste(seas.elk$station_id, 
+                         seas.elk$cr, sep=", ")) %>%
+
+      addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white") %>%
+  addLegend("bottomleft", colors = cols[c(1,2)],  
+           labels = c("Winter", "Summer"),
+           title = "Season",
+           labFormat = labelFormat(prefix = "$"), 
+           opacity = 0.7)
+
+m_summer.elk
+
+m_winter.elk <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
+  addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>% 
+
+  addCircles(lng=seas.elk$longitude[seas.elk$season=="Winter"],
+             lat=seas.elk$latitude[seas.elk$season=="Winter"],
+             radius=as.numeric(seas.elk$cr[seas.elk$season=="Winter"])*scale,
+             weight=0.5, fillOpacity = 0.5,
+             fillColor=cols[1], color=cols[1],
+             label=paste(seas.elk$station_id, 
+                         seas.elk$cr, sep=", ")) %>%
+  
+      addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white")
+  
+  m_winter.elk
+
+```
+
+*Marked animals*
+
+The cameras detected collared individuals in `r length(ind.dat$collar[ind.dat$collar==T])` events across `r length(unique(ind.dat$station_id[ind.dat$collar==T]))` stations, comprising `r length(unique(mrk_spe))` species.
+
+```{r collars, fig.width=6, fig.height=3, include=FALSE}
+collars <- ind.dat %>%
+  filter(collar==T) %>%
+  group_by(collar_tags, station_id) %>%
+  summarize(event_count = n()) 
+
+collars <- left_join(collars, sta[,c(1,3,4)], by = "station_id") %>%
+  mutate(collar_tags = factor(collar_tags),
+         # jitter lat & long so that points aren't on top of each other
+         latitude = jitter(latitude, factor = 0.005),
+         longitude = jitter(longitude, factor = 0.005))
+
+
+
+col.cat <- pnw_palette(pal, (length(levels(collars$collar_tags))))
+col.cat <- rev(col.cat)
+collars$color <- col.cat[collars$collar_tags]
+
+m_collars <- leaflet(options = leafletOptions(attributionControl=FALSE,
+                                              zoomControl=F)) %>%
+  addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>% 
+  #  
+  # addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+  #            radius=800,
+  #            weight=0, fillOpacity = 0.2,
+  #            color="white") %>%
+  addCircles(lng=collars$longitude,
+             lat=collars$latitude,
+             radius=300,
+             weight=0.5, fillOpacity = 0.9, fillColor=collars$color,
+             label = collars$collar_tags) %>%
+
+  addLegend("bottomleft", colors = unique(collars$color),  
+           labels = unique(collars$collar_tags),
+           title = "Collar ID",
+           labFormat = labelFormat(prefix = "$"), 
+           opacity = 0.7)
+
+m_collars
+
+```
+
+
+#### Deer
+
+**Detection maps**
+
+```{r deer detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
 
 sta.det.deer <- ind.dat %>%
   filter(report_names=="Deer") %>%
   group_by(station_id) %>%
-  summarize(det = n()) %>%
+  summarize(det = n(),
+            animals = sum(event_groupsize)) %>%
   distinct() %>%
-  mutate(det = 30*det)
-sta.det.deer$det <- as.character(sta.det.deer$det)
+  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
+  mutate(cr = det/days*100)
+
 sta.det.deer <- inner_join(sta, sta.det.deer, by = "station_id")
+
+scale <- 40
 
 m_det.deer <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
    
   addCircles(lng=sta.det.deer$longitude, lat=sta.det.deer$latitude,
-             radius=as.numeric(sta.det.deer$det),
+             radius=as.numeric(sta.det.deer$cr)*scale,
              weight=1, fillOpacity = 0.7,
              color=cols[1],
              label=paste(sta.det.deer$station_id, 
-                         sta.det.deer$det, sep=", "))
+                         sta.det.deer$det, sep=", ")) %>%
+    addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white")
 m_det.deer
 
 ```
 
-```{r deer age detection map, echo=F, fig.width=5, message=FALSE, warning=FALSE}
+```{r deer age detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
 
 age.det.deer <- ind.dat %>%
   filter(report_names=="Deer") %>%
   group_by(station_id, age) %>%
   summarize(det = n()) %>%
   distinct() %>%
-  mutate(det = 45*det)
-age.det.deer$det <- as.character(age.det.deer$det)
+  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
+  mutate(cr = det/days*100)
+
 age.det.deer <- inner_join(sta,age.det.deer, by = "station_id")
+
+scale <- 45
 
 m_age.deer <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
    
   addCircles(lng=age.det.deer$longitude[age.det.deer$age=="Adult"],
              lat=age.det.deer$latitude[age.det.deer$age=="Adult"],
-             radius=as.numeric(age.det.deer$det[age.det.deer$age=="Adult"]),
+             radius=as.numeric(age.det.deer$cr[age.det.deer$age=="Adult"])*scale,
              weight=1, fillOpacity = 0.5, color=cols[1],
              label=paste(age.det.deer$station_id, 
                          age.det.deer$det, sep=", ")) %>%
 
   addCircles(lng=age.det.deer$longitude[age.det.deer$age=="Adult + Juvenile"],
              lat=age.det.deer$latitude[age.det.deer$age=="Adult + Juvenile"],
-             radius=as.numeric(age.det.deer$det[age.det.deer$age=="Adult + Juvenile"]),
+             radius=as.numeric(age.det.deer$cr[age.det.deer$age=="Adult + Juvenile"])*scale,
              weight=1, fillOpacity = 0.5,
              color=cols[2],
              label=paste(age.det.deer$station_id, 
                          age.det.deer$det, sep=", ")) %>%
+    addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white") %>%
   addLegend("bottomleft", colors = c(cols),  
            labels = c("Adults", "Adults + Juveniles"),
            title = "Age category",
@@ -920,123 +716,142 @@ m_age.deer
 
 ```
 
-*Marked animal count*
+```{r deer seasonal detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
 
-The cameras detected collared individuals in `r length(ind.dat$collar[ind.dat$collar==T])` events across `r length(unique(ind.dat$station_id[ind.dat$collar==T]))` stations, comprising `r length(unique(mrk_spe))` species.
+seas.deer <- ind.dat %>%
+  filter(report_names=="Deer") %>%
+  group_by(station_id, season) %>%
+  summarize(det = n()) %>%
+  distinct() %>%
+  left_join(seas.eff, by=c("station_id", "season")) %>%
+  mutate(cr = det/days*100)
 
-```{r marked, echo=F, fig.height=3}
-ind.dat %>%
-  filter(collar==T) %>%
-  group_by(report_names) %>%
-  summarize(event_count = n()) %>%
-  ggplot(aes(report_names, event_count)) +
-  geom_col() +
-  labs(x = "", y = "Number of events")
+seas.deer <- inner_join(sta,seas.deer, by = "station_id")
 
-```
+scale <- 35
 
-**Activity overlap**
+m_summer.deer <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
+  addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>% 
+   
+  addCircles(lng=seas.deer$longitude[seas.deer$season=="Summer"],
+             lat=seas.deer$latitude[seas.deer$season=="Summer"],
+             radius=as.numeric(seas.deer$cr[seas.deer$season=="Summer"])*scale,
+             weight=0.5, fillOpacity = 0.5, fillColor=cols[2], color=cols[2],
+             label=paste(seas.deer$station_id[seas.deer$season=="Summer"], 
+                         seas.deer$cr[seas.deer$season=="Summer"], sep=", ")) %>%
 
-```{r, echo=F}
-# We first need to convert the "time" in our datasets into radian time (on the range [0,2*pi]) and proportion time (on the range 0-1):
+      addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white") %>%
+  addLegend("bottomleft", colors = cols,  
+           labels = c("Winter", "Summer"),
+           title = "Season",
+           labFormat = labelFormat(prefix = "$"), 
+           opacity = 0.7)
 
-#Radian time
-dat$rtime <- gettime(dat$date_time)
+m_summer.deer
 
-# Then fit the basic activity models available in the package. Note, more complex models are available, including accountting for the fact that the detection distance of camera traps varies from night to day. Here we will keep this simple!
-```
+m_winter.deer <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
+  addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>% 
 
-*Activity by species*
-
-```{r species activity, echo=F, fig.height=sp.height, message=FALSE, warning=FALSE}
-deer.act <- fitact(dat$rtime[dat$species=="Odocoileus hemionus"])
-elk.act <- fitact(dat$rtime[dat$species=="Cervus canadensis"])
-bear.act <- fitact(dat$rtime[dat$species=="Ursus americanus"])
-
-cols <- pnw_palette(pal, 2)
-
-# Plot both on the same axis
-plot(deer.act, yunit="density", data="none",  ylim=c(0,0.15), las=1, lwd=2)
-plot(elk.act, yunit="density", data="none", add=TRUE, tline=list(col=cols[1]))
-plot(bear.act, yunit="density", data="none", add=TRUE, tline=list(col=cols[2]))
-legend("topleft", c("Deer", "Elk", "Bear"), col = c("black", cols), lty=1)
-```
-
-Black-tailed Deer
-
-```{r deer age activity, echo=F, message=FALSE, warning=FALSE, fig.height=sp.height}
-a.deer.act <- fitact(dat$rtime[dat$species=="Odocoileus hemionus" & dat$age=="Adult"])
-aj.deer.act <- fitact(dat$rtime[dat$species=="Odocoileus hemionus" & dat$age=="Adult + Juvenile"])
-
-plot(a.deer.act, yunit="density", data="none", ylim=c(0,0.25), las=1, lwd=2)
-plot(aj.deer.act, yunit="density", data="none", add=TRUE, tline=list(col="red"))
-legend("topleft", c("Adult", "Adult + Juvenile"), col=1:2, lty=1)
-```
-
-```{r deer behaviour activity, echo=F, message=FALSE, warning=FALSE, fig.height=sp.height}
-t.deer.act <- fitact(dat$rtime[dat$species=="Odocoileus hemionus" & dat$behaviour=="traveling"])
-f.deer.act <- fitact(dat$rtime[dat$species=="Odocoileus hemionus" & dat$behaviour=="foraging"])
-
-plot(t.deer.act, yunit="density", data="none", ylim=c(0,0.15), las=1, lwd=2)
-plot(f.deer.act, yunit="density", data="none", add=TRUE, tline=list(col="red"))
-legend("topleft", c("Traveling", "Foraging"), col=1:2, lty=1)
-```
-
-Roosevelt Elk
-
-```{r elk activity, echo=F, message=FALSE, warning=FALSE, fig.height=sp.height}
-
-a.elk.act <- fitact(dat$rtime[dat$species=="Cervus canadensis" & dat$age=="Adult"])
-
-aj.elk.act <- fitact(dat$rtime[dat$species=="Cervus canadensis" & dat$age=="Adult + Juvenile"])
-
-plot(a.elk.act, yunit="density", data="none", ylim=c(0,0.25), las=1, lwd=2)
-plot(aj.elk.act, yunit="density", data="none", add=TRUE, tline=list(col="red"))
-legend("topleft", c("Adult", "Adult + Juvenile"), col=1:2, lty=1)
-```
-
-```{r elk behaviour activity, echo=F, message=FALSE, warning=FALSE, fig.height=sp.height}
-t.elk.act <- fitact(dat$rtime[dat$species=="Odocoileus hemionus" & dat$behaviour=="traveling"])
-f.elk.act <- fitact(dat$rtime[dat$species=="Odocoileus hemionus" & dat$behaviour=="foraging"])
-
-plot(t.elk.act, yunit="density", data="none", ylim=c(0,0.15), las=1, lwd=2)
-plot(f.elk.act, yunit="density", data="none", add=TRUE, tline=list(col="red"))
-legend("topleft", c("Traveling", "Foraging"), col=1:2, lty=1)
-```
-
-Black bears
-
-```{r bear age activity, echo=F, message=FALSE, warning=FALSE, fig.height=sp.height}
-
-a.bear.act <- fitact(dat$rtime[dat$species=="Ursus americanus" & dat$age=="Adult"])
-
-aj.bear.act <- fitact(dat$rtime[dat$species=="Ursus americanus" & dat$age=="Adult + Juvenile"])
-
-plot(a.bear.act, yunit="density", data="none", ylim=c(0,0.35), las=1, lwd=2)
-plot(aj.bear.act, yunit="density", data="none", add=TRUE, tline=list(col="red"))
-legend("topleft", c("Adult", "Adult + Juvenile"), col=1:2, lty=1)
-```
-
-```{r bear behaviour activity, echo=F, message=FALSE, warning=FALSE, fig.height=sp.height}
-t.bear.act <- fitact(dat$rtime[dat$species=="Ursus americanus" & dat$behaviour=="traveling"])
-i.bear.act <- fitact(dat$rtime[dat$species=="Ursus americanus" & dat$behaviour=="inspecting camera"])
-
-plot(t.bear.act, yunit="density", data="none", ylim=c(0,0.15), las=1, lwd=2)
-plot(i.bear.act, yunit="density", data="none", add=TRUE, tline=list(col="red"))
-legend("topleft", c("Traveling", "Inspecting camera"), col=1:2, lty=1)
-```
-
-```{r, eval=F, echo=F}
-# We can compare different activity patterns using coefficient of overlap (∆) - devleoped by Ridout and Linkie. The coefficient ranges from 0 (no overlap) to 1 (complete overlap). We can implement for a two species comparison as follows:
-
-# Note reps reduced to speed up running time
-compareCkern(elk.act, deer.act, reps = 250)
-
-# The output above represents: obs = observed overlap index; null = mean null overlap index; seNull = standard error of the null distribution; pNull = probability observed index arose by chance.
+  addCircles(lng=seas.deer$longitude[seas.deer$season=="Winter"],
+             lat=seas.deer$latitude[seas.deer$season=="Winter"],
+             radius=as.numeric(seas.deer$cr[seas.deer$season=="Winter"])*scale,
+             weight=0.5, fillOpacity = 0.5,
+             fillColor=cols[1], color=cols[1],
+             label=paste(seas.deer$station_id[seas.deer$season=="Winter"], 
+                         seas.deer$cr[seas.deer$season=="Winter"], sep=", ")) %>%
+      addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white")
+  
+  m_winter.deer
 
 ```
 
-**Detection rates**
+#### Bears
+
+```{r bear detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+
+sta.det.bear <- ind.dat %>%
+  filter(report_names=="Bears") %>%
+  group_by(station_id) %>%
+  summarize(det = n()) %>%
+  distinct() %>%
+  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
+  mutate(cr = det/days*100)
+
+sta.det.bear <- inner_join(sta, sta.det.bear, by = "station_id")
+
+scale <- 200
+
+m_det.bear <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
+  addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
+    addCircles(lng=sta.det.bear$longitude, lat=sta.det.bear$latitude,
+             radius=as.numeric(sta.det.bear$cr)*scale,
+             weight=1, fillOpacity = 0.7,
+             color=cols[1],
+             label=paste(sta.det.bear$station_id, 
+                         sta.det.bear$cr, sep=", ")) %>%
+    addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white")
+m_det.bear
+
+```
+
+
+```{r bear age detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+
+age.det.bear <- ind.dat %>%
+  filter(report_names=="Bears") %>%
+  group_by(station_id, age) %>%
+  summarize(det = n()) %>%
+  distinct() %>%
+  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
+  mutate(cr = det/days*100)
+
+age.det.bear <- inner_join(sta,age.det.bear, by = "station_id")
+
+scale <- 200
+
+m_age.bear <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
+  addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
+   
+  addCircles(lng=age.det.bear$longitude[age.det.bear$age=="Adult"],
+             lat=age.det.bear$latitude[age.det.bear$age=="Adult"],
+             radius=as.numeric(age.det.bear$cr[age.det.bear$age=="Adult"])*scale,
+             weight=0.5, fillOpacity = 0.4, 
+             fillColor=cols[1],
+             label=paste(age.det.bear$station_id, 
+                         age.det.bear$det, sep=", ")) %>%
+
+  addCircles(lng=age.det.bear$longitude[age.det.bear$age=="Adult + Juvenile"],
+             lat=age.det.bear$latitude[age.det.bear$age=="Adult + Juvenile"],
+             radius=as.numeric(age.det.bear$cr[age.det.bear$age=="Adult + Juvenile"])*scale,
+             weight=0.5, fillOpacity = 0.4,
+             fillColor=cols[2],
+             label=paste(age.det.bear$station_id, 
+                         age.det.bear$cr, sep=", ")) %>%
+      addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white") %>%
+  addLegend("bottomleft", colors = col.cat[c(1, 9)],  
+           labels = c("Adults", "Adults + Juveniles"),
+           title = "Age category",
+           labFormat = labelFormat(prefix = "$"), 
+           opacity = 1)
+
+m_age.bear
+
+```
+
+
+#### Capture rates
 
 ```{r relative abundance calc, echo=F, warning=F, message=F, eval=T}
 
@@ -1061,11 +876,11 @@ CR.site <- left_join(CR.site, sta[, c("station_id", "latitude", "longitude")])
 ```
 
 
-*Site-level temporal plots*
+**Monthly Capture Rates**
 
 Across all focal species, variation in monthly capture rates are as follows:
 
-```{r, echo=F, eval=T}
+```{r monthly CR, echo=F, eval=T}
 # Capture rates through time
 foc_spe <- foc_spe[order(foc_spe)]
 # Remove any blanks
@@ -1083,6 +898,10 @@ for(i in 1:nrow(mon.dat))
   mon.dat$total.CR[i] <- (nrow(subset(ind.dat, substr(ind.dat$date_time,1,7)==mon.dat$month[i]))/mon.dat$effort[i])*100
 }
 
+#exclude months with all cameras active for <5 days
+mon.dat <- mon.dat %>%
+  filter(effort >= 280)
+
 for(i in 1:length(foc_spe))
 {
   for(j in 1:nrow(mon.dat))
@@ -1099,16 +918,38 @@ mon.dat <- mon.dat[is.infinite(mon.dat$total.CR)==F,]
 
 ```
 
-```{r overall CR, echo=F, eval=T, , fig.height=4}
+```{r monthly CR plot, echo=F, eval=T, fig.width=8, fig.height=4}
 
 par(mfrow=c(1,2))
 
-plot(mon.dat$timestamp, mon.dat$effort, ylab="Monthly Effort (days)", xlab="Date", type="l", las=1)
+plot(mon.dat$timestamp, mon.dat$effort, ylab="Monthly effort (days)", xlab="Date", type="l", las=1, xaxt="n")
 points(mon.dat$timestamp, mon.dat$effort, pch=19, col=rgb(0,0,0,0.4))
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                             "%Y-%m-%d")), 
+     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),
+                              "months"),"%b"),
+     cex.axis = 0.8)
 
 # Overall capture rate
-plot(mon.dat$timestamp, mon.dat$total.CR, ylab="Monthly total CR per 100 days", xlab="Date", type="l", las=1, ylim=c(0, max(mon.dat$total.CR)))
+plot(mon.dat$timestamp, mon.dat$total.CR, ylab="Monthly total CR per 100 days", xlab="Date", type="l", las=1, ylim=c(0, max(mon.dat$total.CR)), xaxt = "n")
 points(mon.dat$timestamp, mon.dat$total.CR, pch=19, col=rgb(0,0,0,0.4))
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                             "%Y-%m-%d")), 
+     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),
+                              "months"),"%b"),
+     cex.axis = 0.8)
 
 ```
 
@@ -1116,29 +957,268 @@ points(mon.dat$timestamp, mon.dat$total.CR, pch=19, col=rgb(0,0,0,0.4))
 
 Species level variation in monthly capture rates are as follows:
 
-```{r species CR, echo=F, eval=T, fig.height=3.5}
-par(mfrow=c(1,3))
+```{r species CR, eval=FALSE, fig.height=sp.height, fig.width=6, include=FALSE}
+
+col.cat <- pnw_palette(pal, length(foc_spe))
+
+plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
+     c(0, max(mon.dat[,3:(2+length(foc_spe))])+5), las=1, ylab="Capture Rate per 100 days",  
+     xlab="", type="n", yaxt="n", xaxt="n")
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                             "%Y-%m-%d")), 
+     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),
+                              "months"),"%b"),
+     cex.axis = 0.8)
+
+legend("topright", as.character(foc_spe), col=col.cat, lwd = 1)
+
 for(i in 1:length(foc_spe))
 {
-  plot(mon.dat$timestamp, mon.dat[,as.character(foc_spe)[i]], ylab="Capture Rate per 100 days", xlab="", type="l", las=1, main=foc_spe[i])
-  points(mon.dat$timestamp, mon.dat[,as.character(foc_spe)[i]], pch=19, col=rgb(0,0,0,0.4))
+  lines(mon.dat$timestamp, mon.dat[,as.character(foc_spe)[i]],  type="l", lwd=1.5,
+        col=col.cat[i])
+  points(mon.dat$timestamp, mon.dat[,as.character(foc_spe)[i]], pch=19, cex=0.8,
+         col="black")
 }
 
+
+```
+
+```{r elk CR}
+plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
+     c(0, ceiling(max(mon.dat$Elk)+1)), main="Elk", las=1, ylab="Capture Rate per 100 days",  
+     xlab="", type="n", yaxt="n", xaxt="n")
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                             "%Y-%m-%d")), 
+     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),
+                              "months"),"%b"),
+     cex.axis = 0.8)
+axis(2, at = seq(0, ceiling(max(mon.dat$Elk)), 1))
+  lines(mon.dat$timestamp, mon.dat$Elk,  type="l", lwd=1.5)
+  points(mon.dat$timestamp, mon.dat$Elk, pch=19, cex=0.8)
+```
+```{r bears CR}
+plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
+     c(0, ceiling(max(mon.dat$Bears)+1)), main="Bears", las=1, ylab="Capture Rate per 100 days",  
+     xlab="", type="n", yaxt="n", xaxt="n")
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                             "%Y-%m-%d")), 
+     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),
+                              "months"),"%b"),
+     cex.axis = 0.8)
+axis(2, at = seq(0, ceiling(max(mon.dat$Bears)), 1))
+  lines(mon.dat$timestamp, mon.dat$Bears,  type="l", lwd=1.5)
+  points(mon.dat$timestamp, mon.dat$Bears, pch=19, cex=0.8)
+```
+
+```{r Deer CR}
+plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
+     c(0, ceiling(max(mon.dat$Deer)+1)), main="Deer", las=1, ylab="Capture Rate per 100 days",  
+     xlab="", type="n", yaxt="n", xaxt="n")
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                             "%Y-%m-%d")), 
+     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),
+                              "months"),"%b"),
+     cex.axis = 0.8)
+axis(2, at = seq(0, ceiling(max(mon.dat$Deer)), 2))
+  lines(mon.dat$timestamp, mon.dat$Deer,  type="l", lwd=1.5)
+  points(mon.dat$timestamp, mon.dat$Deer, pch=19, cex=0.8)
+```
+
+### Other Species
+#### Bobcat
+
+```{r bobcat detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+
+sta.det.bobcat <- ind.dat %>%
+  filter(report_names=="Bobcats") %>%
+  group_by(station_id) %>%
+  summarize(det = n()) %>%
+  distinct() %>%
+  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
+  mutate(cr = det/days*100)
+
+sta.det.bobcat <- inner_join(sta, sta.det.bobcat, by = "station_id")
+
+scale <- 350
+
+m_det.bobcat <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
+  addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
+    addCircles(lng=sta.det.bobcat$longitude, lat=sta.det.bobcat$latitude,
+             radius=as.numeric(sta.det.bobcat$cr)*scale,
+             weight=1, fillOpacity = 0.7,
+             color=cols[1],
+             label=paste(sta.det.bobcat$station_id, 
+                         sta.det.bobcat$cr, sep=", ")) %>%
+    addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white")
+m_det.bobcat
+
+```
+
+```{r Bobcats CR}
+plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
+     c(0, ceiling(max(mon.dat$Bobcats))), main="Bobcats", las=1, ylab="Capture Rate per 100 days",  
+     xlab="", type="n", yaxt="n", xaxt="n")
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                             "%Y-%m-%d")), 
+     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),
+                              "months"),"%b"),
+     cex.axis = 0.8)
+axis(2, at = seq(0, ceiling(max(mon.dat$Bobcats)), 0.1))
+  lines(mon.dat$timestamp, mon.dat$Bobcats,  type="l", lwd=1.5)
+  points(mon.dat$timestamp, mon.dat$Bobcats, pch=19, cex=0.8)
+```
+
+#### Coyote
+
+```{r coyote detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+
+sta.det.coyote <- ind.dat %>%
+  filter(report_names=="Coyotes") %>%
+  group_by(station_id) %>%
+  summarize(det = n()) %>%
+  distinct() %>%
+  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
+  mutate(cr = det/days*100)
+
+sta.det.coyote <- inner_join(sta, sta.det.coyote, by = "station_id")
+
+scale <- 250
+
+m_det.coyote <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
+  addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
+    addCircles(lng=sta.det.coyote$longitude, lat=sta.det.coyote$latitude,
+             radius=as.numeric(sta.det.coyote$cr)*scale,
+             weight=1, fillOpacity = 0.7,
+             color=cols[1],
+             label=paste(sta.det.coyote$station_id, 
+                         sta.det.coyote$cr, sep=", ")) %>%
+    addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white")
+m_det.coyote
+
+```
+
+
+```{r Coyotes CR}
+plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
+     c(0, ceiling(max(mon.dat$Coyotes))), main="Coyotes", las=1, ylab="Capture Rate per 100 days",  
+     xlab="", type="n", yaxt="n", xaxt="n")
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                             "%Y-%m-%d")), 
+     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),
+                              "months"),"%b"),
+     cex.axis = 0.8)
+axis(2, at = seq(0, ceiling(max(mon.dat$Coyotes)), 0.5))
+  lines(mon.dat$timestamp, mon.dat$Coyotes,  type="l", lwd=1.5)
+  points(mon.dat$timestamp, mon.dat$Coyotes, pch=19, cex=0.8)
+```
+
+#### Wolf
+
+```{r wolf detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+
+sta.det.wolf <- ind.dat %>%
+  filter(report_names=="Wolves") %>%
+  group_by(station_id) %>%
+  summarize(det  = n()) %>%
+  distinct() %>%
+  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
+  mutate(cr = det/days*100)
+
+sta.det.wolf <- inner_join(sta, sta.det.wolf, by = "station_id")
+
+scale <- 1000
+
+m_det.wolf <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
+  addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
+    addCircles(lng=sta.det.wolf$longitude, lat=sta.det.wolf$latitude,
+             radius=as.numeric(sta.det.wolf$cr)*scale,
+             weight=1, fillOpacity = 0.7,
+             color=cols[1],
+             label=paste(sta.det.wolf$station_id, 
+                         sta.det.wolf$cr, sep=", ")) %>%
+    addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=1,
+             weight=1, fillOpacity = 1,
+             color="white")
+m_det.wolf
+
+```
+
+
+
+```{r Wolves CR}
+plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
+     c(0, max(mon.dat$Wolves)), main="Wolves", las=1, ylab="Capture Rate per 100 days",  
+     xlab="", type="n", yaxt="n", xaxt="n")
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                             "%Y-%m-%d")), 
+     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),
+                              "months"),"%b"),
+     cex.axis = 0.8)
+axis(2, at = seq(0, max(mon.dat$Wolves), 0.05))
+  lines(mon.dat$timestamp, mon.dat$Wolves,  type="l", lwd=1.5)
+  points(mon.dat$timestamp, mon.dat$Wolves, pch=19, cex=0.8)
 ```
 
 ### Human data
 
 ```{r human data, echo=F, message=FALSE, warning=FALSE, include=F}
-sta.rec <- sta %>%
-  filter(media_recovered==T)
 human.dat <- ind.dat %>%
   filter(species=="Homo sapiens") %>%
   group_by(station_id) %>%
   summarize(events = n(),
             most_popular=as.character(getmode(behaviour)))
 human.sta <- human.dat %>%
-  full_join(sta.rec, by="station_id") %>%
-  mutate(most_popular = if_else(is.na(most_popular), "No Data", most_popular))
+  full_join(sta, by="station_id") %>%
+  mutate(most_popular = if_else(is.na(most_popular), "NA", most_popular))
 
 human.sta$most_popular <- factor(human.sta$most_popular)
 
@@ -1147,26 +1227,32 @@ human.sta$cols <- col.cat[human.sta$most_popular]
 
 ```
 
-```{r human map, echo=F, fig.width=5}
+```{r human map, fig.width=6, fig.height=8, echo=F}
 
-mhum <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
+m_hum <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="satellite") %>%  # Add satellite data
   
-  addCircleMarkers(lng = human.sta$longitude, 
+  addCircles(lng = human.sta$longitude, 
                    lat = human.sta$latitude,
                    fillColor = human.sta$cols, 
-                   color="white",
-                   radius = (if_else(is.na(human.sta$events), 
-                                     3, human.sta$events+3)),
-                   weight=1,
-                   fillOpacity = 0.7,
+                   color=human.sta$cols,
+                   radius = (if_else(is.na(human.sta$events), 200,
+                                     200+human.sta$events*50)),
+                   weight=0.5,
+                   fillOpacity = 0.5,
                    label = c(human.sta$station_id, human.sta$events)) %>%
- addLegend("bottomleft", colors = col.cat,  
-           labels = levels(human.sta$most_popular),
+  
+      addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+             radius=50,
+             weight=1, fillOpacity = 1,
+             color="white") %>%
+  
+ addLegend("bottomleft", colors = c(col.cat[c(1,2,4)], col.cat[3]),  
+           labels = c(levels(human.sta$most_popular)[c(1,2,4)], "NA"),
            title = "Most popular activity",
            labFormat = labelFormat(prefix = "$"), 
            opacity = 1)
-mhum
+m_hum
 
 ```
 
@@ -1192,26 +1278,45 @@ flextable(species.names, cwidth = c(1.5, 3, 1.5))
 # Appendix C
 ## Camera activity
 
-```{r cam activity, echo=F, fig.height=eff.height}
+```{r cam activity, echo=F, fig.height=9, fig.width=6}
+n_sta <- 56
+
+eff <- left_join(eff, snow_eff %>% select(-end_date, -snow_days), by="station_id")
 
 # Adjust layout
 par(mar=c(2,6,1,1))
 plot(c(min(eff$start_date, na.rm=T), 
        max(eff$end_date, na.rm=T)), 
-       c(1,n_sta), las=1, ylab="", xlab="", type="n", yaxt="n")
+       c(1,n_sta+5), las=1, ylab="", xlab="", type="n", yaxt="n", xaxt="n")
 
 # Have the first station plot at the top 
 plot.order <- rev(unique(eff$station_id))
 
-axis(2, at= 1:n_sta, labels= plot.order, las=1, cex.axis=0.4)
+axis(2, at= 1:n_sta, labels= plot.order, las=1, cex.axis=0.6)
+col.cat <- pnw_palette("Bay", 4)
+legend("topright", c("Active", "Active, covered in snow"), lwd = c(2, 3), col = c("black", col.cat[2]))
 
-#Horizontal lines for months
-abline(v=as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date, na.rm=T),1,7),"-01"))
-,as.Date(max(eff$end_date, na.rm=T)),"months"
- )," %Y-%m-%d")), col=rgb(0,0,0,0.1))
+# Vertical lines for months
+abline(v=as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                             "%Y-%m-%d")), col=rgb(0,0,0,0.1))
+
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                             "%Y-%m-%d")), 
+     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(eff$end_date, na.rm=T)),
+                              "months"),"%b"),
+     cex.axis = 0.8)
 
 
-mtext("Station ID", 2, 4)
+mtext("Station ID", 2, 4, cex = 1)
 # Make lines for each of the cameras
 for(i in 1:length(plot.order))
 {
@@ -1222,9 +1327,60 @@ for(i in 1:length(plot.order))
       lines(c(tmp$start_date[j],
                        tmp$end_date[j]),
             c(i,i), lwd=2)
-    }
-  
+  }
 }
+
+for(i in 1:length(plot.order))
+{
+  tmp <- eff[eff$station_id==plot.order[i],]
+  for(j in 1:nrow(tmp))
+    {
+     if(tmp$covered_period[j] == 1)
+    {
+      lines(c(tmp$pause1[j],
+              tmp$resume1[j]),
+            c(i,i), lwd=3, col=col.cat[2])
+    }
+  if(tmp$covered_period[j] == 2)
+    {
+      lines(c(tmp$pause1[j],
+              tmp$resume1[j]),
+            c(i,i), lwd=3, col=col.cat[2])
+      lines(c(tmp$pause2[j],
+              tmp$resume2[j]),
+            c(i,i), lwd=3, col=col.cat[2])
+    }
+  if(tmp$covered_period[j] == 3)
+    {
+      lines(c(tmp$pause1[j],
+              tmp$resume1[j]),
+            c(i,i), lwd=3, col=col.cat[2])
+      lines(c(tmp$pause2[j],
+              tmp$resume2[j]),
+            c(i,i), lwd=3, col=col.cat[2])
+      lines(c(tmp$pause3[j],
+              tmp$resume3[j]),
+            c(i,i), lwd=3, col=col.cat[2])
+    }  
+  if(tmp$covered_period[j] == 4)
+    {
+      lines(c(tmp$pause1[j],
+              tmp$resume1[j]),
+            c(i,i), lwd=3, col=col.cat[2])
+      lines(c(tmp$pause2[j],
+              tmp$resume2[j]),
+            c(i,i), lwd=3, col=col.cat[2])
+      lines(c(tmp$pause3[j],
+              tmp$resume3[j]),
+            c(i,i), lwd=3, col=col.cat[2])
+      lines(c(tmp$pause4[j],
+              tmp$resume4[j]),
+            c(i,i), lwd=3, col=col.cat[2])
+    }
+  }
+}
+
+
 
 ```
 
@@ -1232,12 +1388,13 @@ for(i in 1:length(plot.order))
 ## Detection check
 
 ```{r det species colors, include=F}
+library(stringr)
 # Make species colour codes
 tmp3 <- data.frame("species"=str_sort(unique(dat$report_names)),"Colour"= as.character(pnw_palette(pal, length(unique(dat$report_names)))))
 
 ```
 
-```{r detecion summary, echo=F, message=F, warning=F, fig.height=sp.height}
+```{r detecion summary, echo=F, message=F, warning=F, fig.width=6, fig.height=8}
 
 # Make a separate plot for each station
 # To do this make a plot dataframe

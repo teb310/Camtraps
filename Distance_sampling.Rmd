@@ -1,5 +1,5 @@
 ---
-title: "SPCS_DS"
+title: "SPCS_DS_Elk"
 author: "Tristen Brush"
 date: "14/04/2022"
 output: html_document
@@ -7,9 +7,7 @@ output: html_document
 
 # Initialize ----
 
-Change check date to month and year of camera check (when images were retrieved). Add check_2, check_3 etc. if \>1 check.
-
-```{r setup, include=FALSE}
+```{r setup}
 knitr::opts_chunk$set(echo = TRUE)
 
 library(Distance)
@@ -19,17 +17,32 @@ library(activity)
 library(knitr)
 library(kableExtra)
 
-check_1 <- "2021-09"
+setwd("C:/Users/TBRUSH/R/SPCS_R")
 
-spcs <- read_csv("raw_data/SPCS_detection_data.csv")
-checks <- read_csv("raw_data/SPCS/camera_checks.csv")
-elk_units <- read_csv("raw_data/elk_units.csv")
-trigger_events <- read_csv("processed_data/SPCS_30min_Independent.csv")
+load("input/processed_data/SPCS_standard_input.RData")
+
+elk_units <- read_csv("input/raw_data/DS_units.csv")
+trigger_events <- read_csv("input/processed_data/SPCS_30min_Independent.csv")
 
 conversion.factor <- convert_units("meter", NULL, "square kilometer")
+
+# Remove effort data for stations that had no animals
+row.lookup <- row.lookup %>%
+  filter(station_id != "SPCS04")
+
+# Are you conducting the analysis for a certain season? If yes, fill in below (otherwise comment out)
+season.filt <- "winter"
+trigger_events <- trigger_events %>%
+  filter(season == season.filt)
+dat <- dat %>%
+  filter(season == season.filt)
+row.lookup <- row.lookup %>%
+  filter(season == season.filt)
+
+seas.dates <- "jan1_to_mar31_2022"
 ```
 
-# Data wrangling ----
+
 
 ```{r activity}
 elk_trigger_events <- trigger_events %>%
@@ -40,57 +53,65 @@ plot(act_result)
 print(act_result@act)
 camera.operation.per.day <- 24
 prop.camera.time <- camera.operation.per.day / 24
+# Create multiplier for temporal availability - we'll use this later
 avail <- list(creation=data.frame(rate = act_result@act[1]/prop.camera.time,
                                   SE   = act_result@act[2]/prop.camera.time))
 ```
 
-Because our cameras were run for 24 hours a day, this result tells us that an average of 61% of animals were available to be detected at any given point throughout the day.
+Because our cameras were run for 24 hours a day, this result tells us that animals were available for detection during `r round(avail[["creation"]][["rate"]]*100)`% of the day.
+
+
+# Data wrangling ----
 
 ```{r wrangling}
 
 # Effort calculation
-deployment <- checks %>%
-  arrange(check_date) %>%
-  distinct(station_id, .keep_all = TRUE) %>%
-  mutate(start_date = check_date) %>%
-  select(station_id, start_date)
-retrieval <- checks %>%
-  filter(str_detect(check_date, check_1)) %>%
-  mutate(end_date = if_else(is.na(stop_date), check_date, stop_date)) %>%
-  select(station_id, end_date)
-effort <- 
-  inner_join(deployment, retrieval, by = "station_id")
-effort <- effort %>%
-  mutate(Tk = (int_length((start_date) %--% (end_date))), t = 1, angle = (42*(pi/180))) %>%
-  filter(Tk != 0) %>%
-  mutate(Tk = (Tk-86400)) %>%
+eff$days <- NULL
+
+effort <- row.lookup %>%
+  group_by(station_id) %>%
+  summarize(days = as.numeric(n()))
+effort <- left_join(effort, eff, by="station_id") %>%
+  mutate(Tk = (days*86400)-86400, t = 1, angle = (42*(pi/180))) %>%
+  filter(Tk > 0) %>%
   mutate(temp_effort = Tk/t, AOV = angle/(2*pi)) %>%
   mutate(effort = temp_effort*AOV) %>%
-  select (station_id, temp_effort, AOV)
+  select (station_id, effort, temp_effort, AOV, start_date, end_date) %>%
+  distinct()
 # Take NA values out of data
-spcs <- spcs %>%
-  filter(!is.na(snow_cover))
+dat <- dat %>%
+  filter(!is.na(distance))
 # Create elk-specific dataframe
-elk <- spcs %>%
+elk <- dat %>%
   filter(species == "Cervus canadensis") %>%
-  arrange(station_id)
-elk <- full_join(elk, effort, by = "station_id")
-elk<- elk %>%
+  arrange(station_id) %>%
+  left_join(effort %>% select(station_id, end_date), by="station_id") %>%
+  filter(date_time <= end_date) %>%
+  select(project_id:comments) %>%
+  right_join(effort, by="station_id")
+
+elk <- elk %>%
   transmute(Study.Area = "SPCS",
             Region.Label = "Default",
             Area = 390,
             Sample.Label = station_id,
             Effort = temp_effort,
-            distance = (snow_cover+0.5),
+            distance = (distance+0.5),
             size = group_count,
             multiplier = AOV,
             sex = sex,
+            age = age,
             behaviour = behaviour) %>%
   arrange(Sample.Label)
 elk <- data.frame(elk)
-elk <- elk %>%
-  filter(behaviour != "Inspecting camera")
+# elk <- elk %>%
+#   filter(is.na(behaviour) | behaviour != "inspecting camera")
 
+elk$object <- NA
+elk$object[!is.na(elk$distance)] <- 1:sum(!is.na(elk$distance))
+
+elk.adult <- elk %>%
+  filter(age=="Adult" | is.na(age))
 ```
 
 # Data exploration ----
@@ -99,76 +120,112 @@ elk <- elk %>%
 sum(!is.na(elk$distance))
 table(elk$Sample.Label)
 summary(elk$distance)
-breakpoints <- c(seq(0,8,1), 10, 12, 15, 20, 27)
-hist(elk$distance, breaks=breakpoints, main="Histogram of elk distance detections",
-     xlab="Radial distance (m)")
+
+ggplot(elk, aes(distance)) +
+  geom_histogram(binwidth=1, color = "white") +
+  xlim(c(0,20))
+hist(elk$distance, breaks = c(seq(0,56,1)))
 hist(elk$size)
 ggplot(elk, aes(distance, size)) +
   geom_jitter(width=1, height=1, size=0.7) +
   labs(x="Radial distance (m)", y="Group size")
 ```
 
-Truncate at 12m
+Truncate at 1 and 13m
 
-```{r detection functions, message=FALSE, warning=FALSE, include=FALSE}
-trunc <- 12
-breaks <- c(seq(0,8,1), 10, 12)
+```{r set parameters}
+trunc <- list(left=1, right=13)
+breaks <- c(seq(1,13,1))
+```
 
+
+```{r create models, eval=FALSE, warning=FALSE, include=FALSE}
+
+# elk.uf <- ds(elk, transect = "point", key="unif", adjustment = "cos", max_adjustments = 3,
+#              convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
+# 3 cos: 40550, 2 cos:40829
+# elk.hn <- ds(elk, transect = "point", key="hn", adjustment = "cos", max_adjustments = 2,
+#              convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
+# key: 40796, 1 cos: 40585, 2 cos: 40558
+# elk.hr <- ds(elk, transect = "point", key="hr", adjustment = "cos", max_adjustments = 2,
+#              convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
+# 1 cos: 40541, key: 40687
+
+elk.uf1 <- ds(elk, transect = "point", key="unif", adjustment = "cos", nadj=1, 
+             convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
 elk.uf2 <- ds(elk, transect = "point", key="unif", adjustment = "cos", nadj=2, 
              convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
 elk.uf3 <- ds(elk, transect = "point", key="unif", adjustment = "cos", nadj=3, 
              convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
+
 elk.hn0 <- ds(elk, transect = "point", key="hn", adjustment = NULL,
              convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
 elk.hn1 <- ds(elk, transect = "point", key="hn", adjustment = "cos", nadj = 1,
              convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
-elk.hn2 <- ds(elk, transect = "point", key="hn", adjustment = "cos", nadj=2, 
-             convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
-elk.hr0 <- ds(elk, transect = "point", key="hr", adjustment = NULL,
-             convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
-elk.hr1 <- ds(elk, transect = "point", key="hr", adjustment = "cos", nadj=1, 
+elk.hn2 <- ds(elk, transect = "point", key="hn", adjustment = "cos", nadj = 2,
              convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
 
+elk.hr0 <- ds(elk, transect = "point", key="hr", adjustment = NULL,
+             convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
+elk.hr1 <- ds(elk, transect = "point", key="hr", adjustment = "poly", nadj=1, 
+             convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
+elk.hr2 <- ds(elk, transect = "point", key="hr", adjustment = "poly", nadj=2,
+             convert_units = conversion.factor, cutpoints = breaks, truncation = trunc)
+
+save(list=ls(pattern="elk"),file=paste0("DS_elk_models_",seas.dates,".RData")
 
 ```
 
-```{r summaries}
-ds_summary <- summarize_ds_models(elk.uf2, elk.uf3, elk.hn0, elk.hn1, elk.hn2, 
-                                  elk.hr0, elk.hr1)
+```{r load models}
+load(paste0("DS_elk_models_",seas.dates,".RData"))
+```
+
+
+```{r summaries, fig.height=6, fig.width=9}
+ds_summary <- summarize_ds_models(elk.uf1,elk.uf2, elk.uf3, 
+                                  elk.hn0, elk.hn1, elk.hn2,
+                                  elk.hr0, elk.hr1, elk.hr2)
 print(ds_summary)
 
-par(mfrow=c(2,4))
+par(mfrow=c(3,3))
+plot(elk.uf1, main="UF1", xlab="Distance (m)",
+     showpoints=FALSE, lwd=3, xlim=c(0, 15), ylim=c(0, 1.2))
 plot(elk.uf2, main="UF2", xlab="Distance (m)",
-     showpoints=FALSE, lwd=3, xlim=c(0, 12), ylim=c(0, 1.2))
+     showpoints=FALSE, lwd=3, xlim=c(0, 15), ylim=c(0, 1.2))
 plot(elk.uf3, main="UF3", xlab="Distance (m)",
-     showpoints=FALSE, lwd=3, xlim=c(0, 12), ylim=c(0, 1.2))
+     showpoints=FALSE, lwd=3, xlim=c(0, 15), ylim=c(0, 1.2))
 plot(elk.hn0, main="HN0", xlab="Distance (m)",
-     showpoints=FALSE, lwd=3, xlim=c(0, 12), ylim=c(0, 1.2))
+     showpoints=FALSE, lwd=3, xlim=c(0, 15), ylim=c(0, 1.2))
 plot(elk.hn1, main="HN1", xlab="Distance (m)",
-     showpoints=FALSE, lwd=3, xlim=c(0, 12), ylim=c(0, 1.2))
+     showpoints=FALSE, lwd=3, xlim=c(0, 15), ylim=c(0, 1.2))
 plot(elk.hn2, main="HN2", xlab="Distance (m)",
-     showpoints=FALSE, lwd=3, xlim=c(0, 12), ylim=c(0, 1.2))
+     showpoints=FALSE, lwd=3, xlim=c(0, 15), ylim=c(0, 1.2))
 plot(elk.hr0, main="HR0", xlab="Distance (m)",
-     showpoints=FALSE, lwd=3, xlim=c(0, 12), ylim=c(0, 1.2))
+     showpoints=FALSE, lwd=3, xlim=c(0, 15), ylim=c(0, 1.2))
 plot(elk.hr1, main="HR1", xlab="Distance (m)",
-     showpoints=FALSE, lwd=3, xlim=c(0, 12), ylim=c(0, 1.2))
+     showpoints=FALSE, lwd=3, xlim=c(0, 15), ylim=c(0, 1.2))
+plot(elk.hr2, main="HR2", xlab="Distance (m)",
+     showpoints=FALSE, lwd=3, xlim=c(0, 15), ylim=c(0, 1.2))
+
+# Best AIC: HN2 UF3 HR1 hr2 HN1 UF2
+# Best curve: ALL BUT UF1 & HR0
 ```
 
 ```{r assess functions}
 
 # stage 1: calculate QAIC per model set
-ufQAIC <- QAIC(elk.uf2, elk.uf3)  # 3 adjustments
-hnQAIC <- QAIC(elk.hn0, elk.hn1, elk.hn2)     # 0 adjustment
-hrQAIC <- QAIC(elk.hr0, elk.hr1)  # 0 adjustment
+ufQAIC <- QAIC(elk.uf1, elk.uf2, elk.uf3)  # 2 adjustments
+hnQAIC <- QAIC(elk.hn0, elk.hn1, elk.hn2)     # 1 adjustment
+hrQAIC <- QAIC(elk.hr0, elk.hr1, elk.hr2)  # 1 adjustment
 print(ufQAIC)
 print(hnQAIC)
 print(hrQAIC)
 ```
 
 ```{r assess pt2}
-uf <- elk.uf3
-hn <- elk.hn0
-hr <- elk.hr0
+uf <- elk.uf2
+hn <- elk.hn1
+hr <- elk.hr1
 
 # stage 2
 chats <- chi2_select(uf, hn, hr)$criteria
@@ -201,72 +258,77 @@ hr_rho <- sqrt(hr_p_a * w^2)
 ```{r plot chosen function, fig.height=6, fig.width=9}
 par(mfrow=c(2,3))
 plot(uf, main="Uniform Detection function", xlab="Distance (m)",
-     showpoints=FALSE, lwd=3, xlim=c(0, 12), ylim=c(0,1.2))
+     showpoints=FALSE, lwd=3, xlim=c(0, 15), ylim=c(0,1.2))
 plot(hn, main="Half-normal Detection function", xlab="Distance (m)",
-     showpoints=FALSE, lwd=3, xlim=c(0, 12), ylim=c(0,1.2))
+     showpoints=FALSE, lwd=3, xlim=c(0, 15), ylim=c(0,1.2))
 plot(hr, main="Hazard-rate Detection function", xlab="Distance (m)",
-     showpoints=FALSE, lwd=3, xlim=c(0, 12), ylim=c(0,1.2))
+     showpoints=FALSE, lwd=3, xlim=c(0, 15), ylim=c(0,1.2))
 plot(uf, main="Uniform Probability Density Function", xlab="Distance (m)", 
-     pdf=TRUE, showpoints=FALSE, lwd=3, xlim=c(0, 12))
+     pdf=TRUE, showpoints=FALSE, lwd=3, xlim=c(0, 15))
 plot(hn, main="Half-normal Probability Density Function", xlab="Distance (m)", 
-     pdf=TRUE, showpoints=FALSE, lwd=3, xlim=c(0, 12))
+     pdf=TRUE, showpoints=FALSE, lwd=3, xlim=c(0, 15))
 plot(hr, main="Hazard-rate Probability Density Function", xlab="Distance (m)", 
-     pdf=TRUE, showpoints=FALSE, lwd=3, xlim=c(0, 12))
+     pdf=TRUE, showpoints=FALSE, lwd=3, xlim=c(0, 15))
 
 ```
 
 ```{r get UF estimates}
 
-uf.sum.n <- summary(uf)$dht$individuals$N
-uf.sum.d <- summary(uf)$dht$individuals$D
-kable(uf.sum.n, digits=2, row.names = FALSE,
-             caption="Uniform Model Results") %>%
-  kable_paper(full_width = FALSE)
-uf.dht2.n <- dht2(uf, flatfile=elk, strat_formula = ~1,er_est = "P2", 
-                 convert_units = conversion.factor)
-print(uf.dht2.n, report="abundance")
+viewangle <- 42 # degrees
+samfrac <- viewangle / 360
+
+uf.dht2 <- dht2(uf, flatfile=elk, strat_formula = ~age, er_est = "P2", multipliers = avail,
+                 convert_units = conversion.factor, stratification = "object")
+print(uf.dht2, report="abundance")
+
+uf.dht2.sex <- dht2(uf, flatfile=elk.adult, strat_formula = ~sex, er_est = "P2", multipliers = avail,
+                 convert_units = conversion.factor, stratification = "object")
+print(uf.dht2.sex, report="abundance")
 ```
 
 ```{r get hn estimates}
-hn.sum.n <- summary(hn)$dht$individuals$N
-summary(hn)$dht$individuals$D
-kable(hn.sum.n, digits=2, row.names = FALSE,
-             caption="Half-normal Model Results") %>%
-  kable_paper(full_width = FALSE)
-elk.hn.n <- dht2(hn, flatfile=elk, strat_formula = ~1,er_est = "P2", 
-                 convert_units = conversion.factor)
-print(elk.hn.n, report="abundance")
+
+elk.hn <- dht2(hn, flatfile=elk, strat_formula = ~age, er_est = "P2", multipliers = avail,
+                 convert_units = conversion.factor, stratification = "object")
+print(elk.hn, report="abundance")
+
+hn.dht2.sex <- dht2(hn, flatfile=elk.adult, strat_formula = ~sex, er_est = "P2", multipliers = avail,
+                 convert_units = conversion.factor, stratification = "object")
+print(hn.dht2.sex, report="abundance")
 ```
 
 ```{r get hr estimates}
 
-hr.sum.n <- summary(hr)$dht$individuals$N
-hr.sum.d <- summary(hr)$dht$individuals$D
-kable(hr.sum.n, digits=2, row.names = FALSE,
-             caption="Hazard-rate Model Results") %>%
-  kable_paper(full_width = FALSE)
-hr.dht2.n <- dht2(hr, flatfile=elk, strat_formula = ~1,er_est = "P2", 
-                 convert_units = conversion.factor)
-print(hr.dht2.n, report="abundance")
+hr.dht2 <- dht2(hr, flatfile=elk, strat_formula = ~age,er_est = "P2", multipliers = avail,
+                 convert_units = conversion.factor, stratification = "object", ci_width = 0.5)
+print(hr.dht2, report="abundance")
+
+hr.dht2.sex <- dht2(hr, flatfile=elk.adult, strat_formula = ~sex, er_est = "P2", multipliers = avail,
+                 convert_units = conversion.factor, stratification = "object")
+print(hr.dht2.sex, report="abundance")
 ```
 
 # Bootstrapping ----
 
-```{r summary function}
+```{r summary function, eval=FALSE}
 mysummary <- function(ests, fit){
   return(data.frame(Label = ests$individuals$N$Label,
                     Nhat = ests$individuals$N$Estimate))
 }
 ```
 
-```{r multiplier function}
+```{r multiplier function, eval=FALSE}
 mult <- list(availability= make_activity_fn(elk_trigger_events$rtime, sample="data",
-                                          detector_daily_duration=camera.operation.per.day))
+                                            detector_daily_duration=camera.operation.per.day))
 ```
 
-```{r bootstrap, eval=FALSE}
-boot.uf <- bootdht(model=elk.uf3, flatfile=elk, nboot=100, summary_fun = mysummary,
-                          convert_units = conversion.factor)
+```{r bootstrap, eval=FALSE, warning=FALSE}
+boot.uf <- bootdht(model=uf, flatfile=elk, resample_transects = TRUE, nboot=100, 
+                   summary_fun = mysummary, multipliers = mult, convert_units = conversion.factor)
 
 print(summary(boot.uf))
+```
+
+```{r save data}
+save(list=ls(), file=paste0("DS_elk_",seas.dates,".RData"))
 ```
