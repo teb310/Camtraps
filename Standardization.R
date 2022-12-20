@@ -10,7 +10,7 @@ getwd()
 # setwd("C:/")
 
 # Set project name
-proj_name <- "CWCS"
+proj_name <- "SPCS"
 
 # Set timezone as UTC if cameras don't account for DST, otherwise set as local tz
 tz <- "UTC"
@@ -45,14 +45,19 @@ summary(img_dates$date_time)
 
 # if any cameras had date set up wrong, fix below
 
-# get rid of COQ14
+#06 - hour 2 off
+#09 - year 1 behind
+#21 - jumped from 5-22 to 6-09
+#48 - 1 hr fast
+#54 - date
 
-img_dates <- img_dates %>%
-  filter(station_id != "COQ14")
 
 # COQ07 -> 877 days, 20 hrs behind until Oct 3
-img_dates <- img_dates %>%
-  mutate(date_time = if_else(station_id=="COQ07" & date_time < as.POSIXct("2019-10-03", tz = tz), 
+img_dates_new <- img_dates %>%
+  mutate(date_time = if_else(station_id=="SPCS06", date_time + hours(2),
+                             if_else(station_id=="SPCS09", date_time + years(1),
+                                     if_else(station_id=="SPCS21" & date_time > as.POSIXct("2022-05-21", tz = tz), date_time - days(18)))
+                             , 
                                  date_time + (((877*24)+20)*60*60),
 # COQ04 -> year is 2018 instead of 2019 until Oct 3                                 
                                  if_else(station_id=="COQ04" & date_time < as.POSIXct("2019-10-03", tz=tz),
