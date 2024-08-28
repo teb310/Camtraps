@@ -30,6 +30,7 @@ head(deployment)
 # get rid of unnecessary columns
 deployment_short <- select(deployment, 
                            station_id,
+                           camera_label,
                            treatment, 
                            latitude,
                            longitude, 
@@ -87,28 +88,67 @@ summary(img_dates$date_time)
 # if any cameras had date set up wrong, fix below
 
 #06 - 2 hours off
-#09 - 1 year behind
+#09 - 1 year behind until June2022
 #13 - 12 hours behind
 #21 - jumped from 5-22 to 6-09
 #48 - 1 hr fast
 #54 - 21 days behind
 #55 - 21 days behind
+#21 - got all sorts of weird, throw last check all away 
 
 img_dates_new <- img_dates %>%
-  mutate(date_time = if_else(station_id=="SPCS06", date_time + hours(2),
-                             if_else(station_id=="SPCS09", date_time + years(1),
-                                     if_else(station_id=="SPCS21" & date_time > as.POSIXct("2022-05-21", tz = tz), date_time - days(18),
-                                             if_else(station_id=="SPCS48", date_time - hours(1),
-                                                     if_else(station_id=="SPCS54", date_time + days(21), 
-                                                             if_else(station_id=="SPCS55", date_time + days(21),
-                                                                     if_else(station_id=="SPCS13", date_time + hours(12), date_time))))))))
+  mutate(date_time = if_else(
+    station_id == "SPCS06" & 
+      date_time < as.POSIXct("2022-05-31", tz=tz),
+    date_time + hours(2),
+    if_else(
+      station_id == "SPCS09" & 
+        date_time < as.POSIXct("2022-05-31", tz=tz),
+      date_time + years(1),
+      if_else(
+        station_id == "SPCS21" &
+          date_time > as.POSIXct("2022-05-21", tz = tz) &
+          date_time < as.POSIXct("2022-06-02", tz = tz),
+        date_time - days(18),
+        if_else(
+          station_id == "SPCS48" & 
+            date_time < as.POSIXct("2022-06-01", tz=tz),
+          date_time - hours(1),
+          if_else(
+            station_id == "SPCS54" & 
+              date_time < as.POSIXct("2022-06-01", tz=tz),
+            date_time + days(21),
+            if_else(
+              station_id == "SPCS55" & 
+                date_time < as.POSIXct("2022-05-31", tz=tz),
+              date_time + days(21),
+              if_else(station_id ==
+                        "SPCS13", date_time + hours(12), 
+                      if_else(station_id=="SPCS21" &
+                              date_time > as.POSIXct("2022-06-02", tz = tz),
+                              NA,
+                              date_time)
+              )
+            )
+          )
+        )
+      )
+    )
+  ))
 
 # make sure it looks right
 summary(img_dates_new$date_time)
+img_dates_new %>%
+  filter(!is.na(date_time)) %>%
+  group_by(station_id) %>%
+  summarize(min = min(date_time),
+            max = max(date_time)) %>%
+  view()
 
-#bring correct timestamps into ud.dat
+#bring correct timestamps into ud.dat, then remove any with Date = NA
 
-ud.dat <- left_join(idents, img_dates_new[,c(2,30)], by="image_id")
+ud.dat <- left_join(idents, img_dates_new[,c(2,30)], by="image_id") %>%
+  filter(!is.na(date_time))
 
 # rename columns as needed
 # NOTE: I'm renaming snow_cover to distance because this is where I entered my distance measurements
@@ -131,11 +171,26 @@ ud.dat <- ud.dat %>%
 ud.dat$`project_id` <- proj_name 
 ud.dat$time_zone <- tz
 
-# if you used a certai value to indicate NA in IDs, specify below
+# if you used a certain value to indicate NA in IDs, specify below
 # e.g. I entered "100" to indicate unknown group size & distance(snow_cover)
 ud.dat <- ud.dat %>%
   mutate(group_count = na_if(group_count, 100),
          distance = na_if(distance, 100))
+
+# if anything else is NA that should have a value (or vice versa), correct below
+ud.dat <- ud.dat %>%
+  # humans should not have sex/age values
+  mutate(
+    sex = if_else(species == "Homo sapiens", NA, if_else(
+      # any other species should be marked unknown if value is NA
+      is.na(sex), "Unknown", sex)),
+    age = if_else(species == "Homo sapiens", NA, if_else(
+      !is.na(age), age,
+      if_else(
+        # if sex is specified but not age, then this was a mistake and age should be 'adult'. otherwise mark age unknown
+        sex != "Unknown", "Adult", "Unknown")
+    ))
+  )
 
 
 # pare down to desired columns only
@@ -170,7 +225,7 @@ rm(list=ls())
 
 # Load your data [change the files paths to your data locations]
 dat <- read.csv("input/raw_data/SPCS_detection_data.csv", header=T)
-eff <- read.csv("input/raw_data/SPCS_deployment_data.csv", header=T)
+che <- read.csv("input/raw_data/SPCS_deployment_data.csv", header=T)
 sta <- read.csv("input/raw_data/SPCS_station_data.csv", header=T)
 
 # Create an output folder (this may return a warning if the folder already exists)
@@ -187,23 +242,23 @@ new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"
 if(length(new.packages)) install.packages(new.packages)
 lapply(list.of.packages, require, character.only = TRUE)
 
-# 1) dat$misfire and eff$media_recovered must be logical (should return TRUE)
+# 1) dat$misfire and che$media_recovered must be logical (should return TRUE)
 is.logical(dat$misfire)
-is.logical(eff$media_recovered)
+is.logical(che$media_recovered)
 # If FALSE then convert column to TRUE/FALSE
 # If you don't have a misfire column and all of you data have animals in them, run the following:
 # dat$misfire <- FALSE
 
-# 2) All dates must be in YYYY-MM-DD in 'eff' and YYYY-MM-DD HH:MM:SS in 'dat' 
+# 2) All dates must be in YYYY-MM-DD in 'che' and YYYY-MM-DD HH:MM:SS in 'dat' 
 # If the following return NA, change your formatting
 
-as.Date(ymd(eff$check_date[1]))
+as.Date(ymd(che$check_date[1]))
 ymd_hms(dat$date_time[1])
 
-# 3) the dates in 'eff$stop_date' must be the when the camera fails, not when you check the camera. 
+# 3) the dates in 'che$stop_date' must be the when the camera fails, not when you check the camera. 
 #    If the camera fails (due to damage or full sd card), enter the date that it fails under stop_date. 
 #    (Tip: use timelapse data, not motion data, to determine precise stop date)
-sto <- eff %>%
+sto <- che %>%
   filter(!is.na(stop_date))
 as.Date(ymd(sto$stop_date))
 
@@ -218,128 +273,116 @@ is.numeric(dat$count)
 dat_new <- dat
 
 # 6) separate check_dates into deployment and retrieval dates and ensure all deployment dates are before retrieval dates for each deployment
+# We need to make camera status a factor so that we can use it for sorting
+che$camera_status <- factor(che$camera_status, levels = c("Unknown Failure", "Vandalism/Theft", "Retired", "Available for use", "Active in field"))
 
-# Separate deployment from retrieval
-deployment <- eff %>%
-  group_by(station_id) %>%
-  arrange(as.Date(check_date)) %>%
-  slice_min(check_date) %>%
-  mutate(start_date = check_date) %>%
-  select(station_id, start_date)
-retrieval <- eff %>%
-  group_by(station_id) %>%
-  arrange(as.Date(check_date)) %>%
-  slice_max(check_date) %>%
-  mutate(retrieval_date = check_date) %>%
-  select(station_id, retrieval_date)
-
-# Separate out dates of camera failure
-failure <- eff %>%
-  filter(!is.na(stop_date)) %>%
-  # SP20 giving us problems -> take out stop date
-  filter(station_id != "SPCS20") %>%
-  unique() %>%
-  mutate(fail_date = stop_date) %>%
-  select(station_id, fail_date)
-
-# Join into dataframe with one row per station, then clean
-eff_new <- eff %>%
-  left_join(deployment, by = "station_id") %>%
-  left_join(retrieval, by = "station_id") %>%
-  left_join(failure, by = "station_id") %>%
+che_new <- che %>%
+  group_by(station_id, camera_label) %>%
+  arrange(as.Date(check_date), camera_status) %>%
+  mutate(start = lag(check_date)) %>%
+  filter(!is.na(start)) %>%
+  mutate(stop = if_else(!is.na(stop_date), stop_date, check_date)) %>%
   select(-check_date, -media_recovered, -stop_date, -camera_status, -treatment, -feature) %>%
   arrange(station_id) %>%
-  unique() %>%
-  mutate(end_date = if_else(is.na(fail_date), retrieval_date, fail_date))
+  unique()
 
-# Logic = stations must be active for 0 or more days -> count of TRUE should equal n of rows in eff_new dataframe
-table((strptime(eff_new$end_date, "%Y-%m-%d", tz="UTC") - 
-         strptime(eff_new$start_date, "%Y-%m-%d", tz="UTC"))>=0)
-nrow(eff_new)
+# Logic = stations must be active for 0 or more days -> count of TRUE should equal n of rows in che_new dataframe
+table((strptime(che_new$stop, "%Y-%m-%d", tz="UTC") - 
+         strptime(che_new$start, "%Y-%m-%d", tz="UTC"))>=0)
+nrow(che_new)
 # if numbers don't match, check deployment, retrieval, and failure dates again
+che_new$dep_length <- as.numeric(difftime(strptime(che_new$stop, "%Y-%m-%d", tz="UTC"),
+  strptime(che_new$start, "%Y-%m-%d", tz="UTC"), units = "days"))
 
-# 7) Do you have lat/long data for all of your sites you have eff data for? If yes, both should return FALSE
+# 7) Do you have lat/long data for all of your sites you have che data for? If yes, both should return FALSE
 anyNA(sta$latitude)
 anyNA(sta$longitude)
 # If TRUE, check sta to see where lat/long data is missing!
 
 # 8) Do you have periods where cameras were covered by snow? If yes, enter in csv and load below
 snow <- read_csv("input/raw_data/snow.csv")
+# make sure names match
+summary(sort(unique(snow$station_id)) == sort(unique(che$station_id)))
+
 # extract dates of covered periods
 snow_new <- snow %>%
   mutate(
     covered_periods = if_else(is.na(covered_start), 0, 
                               str_count(covered_start, ",") + 1),
-    first_snow = strptime(first_snow, "%F"))
+    days = if_else(covered_periods==1, as.numeric(difftime(covered_end+days(1), covered_start, units = "days")), NA))
+
+
 
 # set dates of first and last day camera was active FOR EACH PERIOD OF SNOW COVERAGE
+# 
+# for(i in 1:max(snow_new$covered_periods))
+# {
+#   for(j in 1:nrow(snow_new))
+#   {
+#     if(snow_new$covered_periods[j] < as.numeric(i))
+#     {
+#       snow_new[j, paste0("pause",i)] <- as.POSIXct(NA)
+#       snow_new[j, paste0("resume",i)] <- as.POSIXct(NA)
+#       
+#     } else {
+#       snow_new[j, paste0("pause",i)] <- ymd(as.POSIXct(str_extract(snow_new$covered_start[j], 
+#                                                                    "\\d\\d\\d\\d-\\d\\d-\\d\\d")) - days(1))
+#       snow_new$covered_start[j] <- str_remove(snow_new$covered_start[j], 
+#                                               "\\d\\d\\d\\d-\\d\\d-\\d\\d")
+#       snow_new[j, paste0("resume",i)] <- ymd(as.POSIXct(str_extract(snow_new$covered_end[j], 
+#                                                                     "\\d\\d\\d\\d-\\d\\d-\\d\\d")) - days(1))
+#       snow_new$covered_end[j] <- str_remove(snow_new$covered_end[j], 
+#                                             "\\d\\d\\d\\d-\\d\\d-\\d\\d")
+#     }
+#   }
+# }
+# 
+# # make sure it looks right, then fix name & delete snow_new
+# view(snow_new)
+# 
+# snow <- snow_new %>%
+#   select(-covered_start, -covered_end)
+# snow_new <- NULL
 
-for(i in 1:max(snow_new$covered_periods))
-{
-  for(j in 1:nrow(snow_new))
-  {
-    if(snow_new$covered_periods[j] < as.numeric(i))
-    {
-      snow_new[j, paste0("pause",i)] <- as.POSIXct(NA)
-      snow_new[j, paste0("resume",i)] <- as.POSIXct(NA)
-      
-    } else {
-      snow_new[j, paste0("pause",i)] <- ymd(as.POSIXct(str_extract(snow_new$covered_start[j], 
-                                                                   "\\d\\d\\d\\d-\\d\\d-\\d\\d")) - days(1))
-      snow_new$covered_start[j] <- str_remove(snow_new$covered_start[j], 
-                                              "\\d\\d\\d\\d-\\d\\d-\\d\\d")
-      snow_new[j, paste0("resume",i)] <- ymd(as.POSIXct(str_extract(snow_new$covered_end[j], 
-                                                                    "\\d\\d\\d\\d-\\d\\d-\\d\\d")) - days(1))
-      snow_new$covered_end[j] <- str_remove(snow_new$covered_end[j], 
-                                            "\\d\\d\\d\\d-\\d\\d-\\d\\d")
-    }
-  }
-}
+# # join snow with che to ensure resume dates are not after stop dates, then count snow days
+# 
+# snow_eff <- inner_join(snow, eff_new %>% select(station_id, end_date), by="station_id") %>%
+#   mutate(end_date = as.POSIXct(end_date)) %>%
+#   distinct(station_id, .keep_all = T)
+# view(snow_eff)
+# # are any resume dates after the station's end_date? If so, correct before moving on
+# 
+# # count snow days
+# for(i in 1:max(snow_eff$covered_periods))
+# {
+#   snow_eff$snow_days <- as.numeric(NA)
+#   for(j in 1:nrow(snow_eff))
+#   {
+#     if(snow_eff$covered_periods[j] >= as.numeric(i))
+#     {
+#       snow_eff[j, paste0("period",i)] <- as.numeric(difftime(ymd(snow_eff[[j, paste0("resume",i)]]),
+#                                                              ymd(snow_eff[[j, paste0("pause",i)]]),
+#                                                              units="days"))
+#     } else {
+#       snow_eff[j, paste0("period",i)] <- 0
+#     }
+#     snow_eff$snow_days[j] <- 0
+#     if(i == 1)
+#     {
+#       snow_eff$snow_days[j] <- snow_eff$period1[j]
+#     } else {
+#       snow_eff$snow_days[j] <- sum(snow_eff$snow_days[j], snow_eff[[j, paste0("period",i)]])
+#     }
+#     snow_eff[paste0("period",i)] <- NULL
+#   }
+# }
+# 
+# # check that it looks good
+# view(snow_eff)
 
-# make sure it looks right, then fix name & delete snow_new
-view(snow_new)
-
-snow <- snow_new %>%
-  select(-covered_start, -covered_end)
-snow_new <- NULL
-
-# join snow with eff to ensure resume dates are not after stop dates, then count snow days
-
-snow_eff <- inner_join(snow, eff_new %>% select(station_id, end_date), by="station_id") %>%
-  mutate(end_date = as.POSIXct(end_date)) %>%
-  distinct(station_id, .keep_all = T)
-view(snow_eff)
-# are any resume dates after the station's end_date? If so, correct before moving on
-
-# count snow days
-i <- 1
-j <- 1
-for(i in 1:max(snow_eff$covered_periods))
-{
-  snow_eff$snow_days <- as.numeric(NA)
-  for(j in 1:nrow(snow_eff))
-  {
-    if(snow_eff$covered_periods[j] >= as.numeric(i))
-    {
-      snow_eff[j, paste0("period",i)] <- as.numeric(difftime(ymd(snow_eff[[j, paste0("resume",i)]]),
-                                                             ymd(snow_eff[[j, paste0("pause",i)]]),
-                                                             units="days"))
-    } else {
-      snow_eff[j, paste0("period",i)] <- 0
-    }
-    snow_eff$snow_days[j] <- 0
-    if(i == 1)
-    {
-      snow_eff$snow_days[j] <- snow_eff$period1[j]
-    } else {
-      snow_eff$snow_days[j] <- sum(snow_eff$snow_days[j], snow_eff[[j, paste0("period",i)]])
-    }
-    snow_eff[paste0("period",i)] <- NULL
-  }
-}
-
-# check that it looks good
-view(snow_eff)
+snow_eff <- snow_new %>%
+  group_by(station_id) %>%
+  summarize(snow_days = sum(days, na.rm = T))
 
 # If you are satisfied with all of the above, continue to part 3
 
@@ -352,58 +395,76 @@ dat <- dat_new
 
 unique(dat$species)
 
-dat$report_names <- if_else(dat$species == "Ursus americanus",
-                            "Bears",
-                            if_else(dat$species == "Bird spp.", 
-                                    "Bird species",
-                                    if_else(dat$species == "Canis familiaris",
-                                            "Dogs",
-                                            if_else(dat$species == "Canis latrans",
-                                                    "Coyotes",
-                                                    if_else(dat$species == "Canis lupus",
-                                                            "Wolves",
-                                                            if_else(dat$species == "Cervus canadensis",
-                                                                    "Elk",
-                                                                    if_else(dat$species == "Lynx rufus",
-                                                                            "Bobcats",
-                                                                            if_else(dat$species == "Odocoileus hemionus",
-                                                                                    "Deer",
-                                                                                    if_else(dat$species == "Homo sapiens",
-                                                                                            "Humans",
-                                                                                            if_else(dat$species == "Procyon lotor",
-                                                                                                    "Raccoons",
-                                                                                                    if_else(dat$species == "Lepus americanus",
-                                                                                                            "Hares",
-                                                                                                            if_else(dat$species == "Felis catus",
-                                                                                                                    "Cats",
-                                                                                                                    if_else(dat$species == "Tamiasciurus douglasii", 
-                                                                                                                            "Squirrels",
-                                                                                                                            if_else(dat$species == "Mus spp.", 
-                                                                                                                                    "Mice",
-                                                                                                                                    "Unknown species"
-                                                                                                                            ))))))))))))))
-
+dat$report_names <- if_else(
+  dat$species == "Ursus americanus",
+  "Black bears",
+  if_else(
+    dat$species == "Bird spp.",
+    "Bird species",
+    if_else(
+      dat$species == "Canis familiaris",
+      "Dogs",
+      if_else(
+        dat$species == "Canis latrans",
+        "Coyotes",
+        if_else(
+          dat$species == "Canis lupus",
+          "Wolves",
+          if_else(
+            dat$species == "Cervus canadensis",
+            "Elk",
+            if_else(
+              dat$species == "Lynx rufus",
+              "Bobcats",
+              if_else(
+                dat$species == "Odocoileus hemionus",
+                "Deer",
+                if_else(
+                  dat$species == "Homo sapiens",
+                  "Humans",
+                  if_else(
+                    dat$species == "Procyon lotor",
+                    "Raccoons",
+                    if_else(
+                      dat$species == "Lepus americanus",
+                      "Hares",
+                      if_else(
+                        dat$species == "Felis catus",
+                        "Cats",
+                        if_else(
+                          dat$species == "Tamiasciurus douglasii",
+                          "Squirrels",
+                          if_else(
+                            dat$species == "Mus spp.",
+                            "Mice",
+                            if_else(dat$species == "Ursus arctos",
+                                    "Grizzly bears",
+                                    NA)
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+)
 
 # Prepare eff dates
-eff <- eff_new
-ymd(eff$start_date[1])
-
-eff$start_date <- strptime(as.Date(ymd_hms(eff$start_date, truncated=3, tz=tz)), "%Y-%m-%d", tz=tz)
-eff$retrieval_date <- strptime(as.Date(ymd_hms(eff$retrieval_date, truncated=3, tz=tz)), "%Y-%m-%d", tz=tz)
-eff$fail_date   <- strptime(as.Date(ymd_hms(eff$fail_date, truncated=3, tz=tz)), "%Y-%m-%d", tz=tz)
-eff <- eff %>%
-  mutate(end_date = if_else(is.na(fail_date), retrieval_date, fail_date)) %>%
-  select(-fail_date, -retrieval_date)
+eff <- che_new %>%
+  group_by(station_id) %>%
+  summarize(days_active = sum(dep_length)) %>%
+  filter(days_active>0)
 
 # Join snow days data for calculating days of activity
-eff <- inner_join(eff, snow_eff %>% select(station_id, snow_days), by="station_id") %>%
-  distinct(station_id, .keep_all = T)
+eff <- full_join(eff, snow_eff, by="station_id")
 # calculate number of days each station was active
-eff$days <- round(as.numeric(difftime(eff$end_date, (eff$start_date - days(1)),
-                                      units="days")) - eff$snow_days , 1)
-# remove inactive cameras (have days = 1 because we added 1 to calculation to account for 2 half days on set up and take down)
-eff <- eff %>%
-  filter(days != 1)
+eff$eff <- eff$days_active - eff$snow_days
 
 # Prepare dat date & time
 ymd_hms(dat$date_time[1],truncated=2)
@@ -413,30 +474,30 @@ dat$date_time <- ymd_hms(dat$date_time, truncated=2, tz=tz)
 ## Seasons ####
 # IF YOU WANT TO SPLIT YOUR DATA BY SEASONS: edit season names, start and end dates below
 # Keep in mind that start date will not be included in interval, but end date will.
-seasons <- tibble(season = c("summer", "winter"),
-                  start_date = c("2021-06-14", "2022-01-01"),
-                  end_date = c("2021-09-01", "2022-03-31"))
-seasons <- seasons %>%
-  mutate(start_date = as.POSIXct(start_date),
-         end_date = as.POSIXct(end_date),
-         int = interval(start_date, end_date),
-         days = round(int_length(int)/86400))
-
-for(j in 1:nrow(dat))
-{
-  dat$season[j] <- as.character("other")
-  for (i in 1:nrow(seasons))
-  {
-    if (dat$date_time[j] %within% seasons$int[i])
-    {
-      dat$season[j] <- seasons$season[i]
-    }
-  }
-}
-
-dat$season <- as.factor(dat$season)
-# check values are as expected
-summary(dat$season)
+# seasons <- tibble(season = c("summer", "winter"),
+#                   start_date = c("2021-06-14", "2022-01-01"),
+#                   end_date = c("2021-09-01", "2022-03-31"))
+# seasons <- seasons %>%
+#   mutate(start_date = as.POSIXct(start_date),
+#          end_date = as.POSIXct(end_date),
+#          int = interval(start_date, end_date),
+#          days = round(int_length(int)/86400))
+# 
+# for(j in 1:nrow(dat))
+# {
+#   dat$season[j] <- as.character("other")
+#   for (i in 1:nrow(seasons))
+#   {
+#     if (dat$date_time[j] %within% seasons$int[i])
+#     {
+#       dat$season[j] <- seasons$season[i]
+#     }
+#   }
+# }
+# 
+# dat$season <- as.factor(dat$season)
+# # check values are as expected
+# summary(dat$season)
 
 
 # PART 4: INDEPENDENCE ####
@@ -484,7 +545,7 @@ dat <- dat %>%
   group_by(event_id) %>%
   mutate(collar = if_else(any(collar), T, F))
 
-# If an image has more than one ID for the same species, take the ID with fewer NAs
+# If there are duplicate IDs for one image, take the ID with fewer NAs
 dat$empty <- apply(X = is.na(dat %>% select(count:comments)), MARGIN = 1, FUN = sum)
 dat <- dat %>%
   group_by(image_id, species) %>%
@@ -523,9 +584,9 @@ dat <-  dat %>%
 
 # Subset to rows with collar tags
 
-dat <- dat %>%
-  filter(!(collar == T & is.na(collar_tags))) %>%
-  as.data.frame()
+# dat <- dat %>%
+#   filter(!(collar == T & is.na(collar_tags))) %>%
+#   as.data.frame()
 
 # Subset to the observation with the fewest NAs in each event
 ind.dat <- dat %>%
@@ -542,43 +603,52 @@ ind.dat <- ind.dat[!duplicated(ind.dat$event_id),] %>%
 # Remove all observations with occur outside of camera activity schedules
 # We need to know how many detections there are in each month -> create a row lookup
 # This is just a list of ever day a camera was active.
+che <- che_new
 
 daily.lookup <- list()
-for(i in 1:nrow(eff))
-{
+for(i in 1:nrow(che)) {
   daily.lookup[[i]] <- data.frame(
-    "date" = seq(eff$start_date[i],
-                 eff$end_date[i],
+    "date" = seq(as.Date(che$start[i]),
+                 as.Date(che$stop[i]),
                  by = "days"),
-    "station_id" = eff$station_id[i]
+    "station_id" = che$station_id[i],
+    "camera_label" = che$camera_label[i]
   )
-  # ONLY KEEP THIS SECOND PART IF YOU HAVE SNOW COVER DATES
-  for (j in 1:max(snow_eff$covered_periods))
-  {
-    if (snow_eff$covered_periods[i] >= as.numeric(j))
-    {
-      int <-
-        snow_eff[[i, paste0("pause", j)]] %--% snow_eff[[i, paste0("resume", j)]]
-      daily.lookup[[i]]$rm <- daily.lookup[[i]]$date %within% int
-      daily.lookup[[i]] <- subset(daily.lookup[[i]], rm != TRUE)
-      daily.lookup[[i]]$rm <- NULL
-    }
-  }
-  # ONLY KEEP THIS THIRD PART IF YOU ARE ASSIGNING SEASONS TO DATA
-  for (k in 1:nrow(daily.lookup[[i]]))
-  {
-    daily.lookup[[i]]$season[k] <- "other"
-    for (h in 1:nrow(seasons))
-    {
-      if (daily.lookup[[i]]$date[k] %within% seasons$int[h])
-      {
-        daily.lookup[[i]]$season[k] <- seasons$season[h]
-      }
-    }
-  }
 }
-
 row.lookup <- do.call(rbind, daily.lookup)
+
+
+# ONLY KEEP THIS SECOND PART IF YOU HAVE SNOW COVER DATES
+
+snow_cover <- snow %>%
+  filter(!is.na(covered_start))
+
+snow.lookup <- list()
+for(i in 1:nrow(snow_cover)) {
+  snow.lookup[[i]] <- data.frame(
+    "date" = seq(as.Date(snow_cover$covered_start[i]), 
+                 as.Date(snow_cover$covered_end[i]), 
+                 by = "days"),
+    "station_id" = snow_cover$station_id[i]
+  )
+}
+snow.lookup <- do.call(rbind, snow.lookup)
+
+row.lookup <- anti_join(row.lookup, snow.lookup)
+
+  # # ONLY KEEP THIS THIRD PART IF YOU ARE ASSIGNING SEASONS TO DATA
+  # for (k in 1:nrow(daily.lookup[[i]]))
+  # {
+  #   daily.lookup[[i]]$season[k] <- "other"
+  #   for (h in 1:nrow(seasons))
+  #   {
+  #     if (daily.lookup[[i]]$date[k] %within% seasons$int[h])
+  #     {
+  #       daily.lookup[[i]]$season[k] <- seasons$season[h]
+  #     }
+  #   }
+  # }
+
 
 # Remove duplicates
 row.lookup <- row.lookup[duplicated(row.lookup)==F,]
@@ -600,7 +670,7 @@ write.csv(ind.dat, paste0("input/processed_data/",dat$project_id[1], "_",indepen
 write.csv(row.lookup, paste0("input/processed_data/",dat$project_id[1], "_daily_effort_lookup.csv"), row.names = F)
 
 # Save your environment for importing into reporting and analysis scripts
-save(list=c("daily.lookup", "dat", "eff", "ind.dat", "row.lookup", "snow_eff", "sta", "tz", "mins"), file = paste0("C:/Users/TBRUSH/R/SPCS_R/input/processed_data/",dat$project_id[1],"_standard_input.RData"))
+save(list=c("daily.lookup", "dat", "eff", "ind.dat", "row.lookup", "snow.lookup", "sta", "tz", "mins"), file = paste0(getwd(),"/input/processed_data/",dat$project_id[1],"_standard_input.RData"))
 rm(list=ls())
 
 
