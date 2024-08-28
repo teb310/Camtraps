@@ -1,11 +1,10 @@
 ---
-title: "Elk Sightability Basic Report"
-subtitle: "An initial summary of camera trap data from June to September 2021 in the Sechelt Peninsula"
+title: "Elk Sightability Camera Report"
+subtitle: "An summary of camera trap data from June 2021 to June 2023 on the Sechelt Peninsula"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output: 
   word_document:
 always_allow_html: TRUE
- 
 ---
 
 ```{r setup and tests, include=FALSE, warnings=F, message=F}
@@ -14,16 +13,31 @@ always_allow_html: TRUE
 #Read and run this chunk of code line by line in the R Console (do not press knit) - there are some questions below which you will have to answer and some logic tests to complete. Once you are happy that the conditions have been satisfied, hit 'knit' above. 
 
 # Load packages
-list.of.packages <- c("leaflet", "dplyr", "colortools", "kriging", "corrplot", "lubridate", "kableExtra", "tidyr", "ggplot2", "gridExtra", "activity", "overlap", "webshot", "flextable",
-                      "PNWColors")
+list.of.packages <-
+  c(
+    "leaflet",
+    "dplyr",
+    "kriging",
+    "corrplot",
+    "lubridate",
+    "kableExtra",
+    "tidyverse",
+    "ggplot2",
+    "gridExtra",
+    "activity",
+    "overlap",
+    "webshot",
+    "flextable",
+    "PNWColors"
+  )
 
 # Check you have them and load them
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
-if(length(new.packages)) install.packages(new.packages)
+if(length(new.packages)) install.packages(new.packages, repos = "http://cran.us.r-project.org")
 lapply(list.of.packages, require, character.only = TRUE)
 
 # Load your data [change the files paths to your data locations]
-load("C:/Users/TBRUSH/R/SPCS_R/input/processed_data/SPCS_standard_input.RData")
+load("input/processed_data/SPCS_standard_input.RData")
 
 # Timezone [Use UTC if your cameras do not correct for daylight saving time, if they do use the timezone where the data was collected]
 tz <- "UTC"
@@ -39,8 +53,8 @@ category <- "project_id"
 pal <- "Bay"
 
 # Set focal species (those you want to include in in-depth analysis) and irrelevant species(those you want to exclude from basic results like sex, age, behaviour)
-irr_spe <- c("Humans","Dogs","Cats","Unknown species", "Mice", "Birds")
-foc_spe <- c("Elk", "Deer", "Bears", "Bobcats", "Coyotes", "Wolves")
+irr_spe <- c("Humans","Dogs","Cats","Unknown species", "Mice", "Bird species")
+foc_spe <- c("Elk", "Deer", "Black bears", "Bobcats", "Coyotes", "Wolves")
 
 # Set species which you want collar/tag data for
 mrk_spe <- "Elk"
@@ -56,12 +70,56 @@ seas.eff <- row.lookup %>%
   mutate(month = month(date)) %>%
   mutate(season = if_else(month >= 5 & month <= 10, "Summer", "Winter")) %>%
   group_by(station_id, season) %>%
-  summarize(days = n())
+  summarize(eff = n())
+
+# set the dates you want to filter to in this report
+start <- "2021-06-15"
+end <- "2022-06-01"
+
+# set minimum number of days a camera must be active to be included in this report
+min_eff <- 30
+
+# we need to remove any stations with data problems
+stations_to_exclude <- c("SPCS17", "SPCS61", "SPCS04")
+
+sta <- sta %>% filter(!station_id %in% stations_to_exclude)
+dat <- dat %>% filter(!station_id %in% stations_to_exclude)
+ind.dat <- ind.dat %>% filter(!station_id %in% stations_to_exclude)
+row.lookup <- row.lookup %>% filter(!station_id %in% stations_to_exclude)
+snow.lookup <- snow.lookup %>% filter(!station_id %in% stations_to_exclude)
+# effs will update in the next chunk
 
 ```
 
-
 ```{r non-adjustable options, echo=F, include=F}
+# filter everything based on start/end dates
+dat <- dat %>%
+  filter(date_time >= as.Date(start) & date_time < as.Date(end))
+ind.dat <- ind.dat %>%
+  filter(date_time >= as.Date(start) & date_time < as.Date(end))
+row.lookup <- row.lookup %>%
+  filter(date >= as.Date(start) & date < as.Date(end))
+snow.lookup <- snow.lookup %>%
+  filter(date >= as.Date(start) & date < as.Date(end))
+# now recalculate effs
+snow_eff <- snow.lookup %>%
+  group_by(station_id) %>%
+  summarize(snow_days = n())
+eff <- row.lookup %>%
+  group_by(station_id) %>%
+  summarize(eff = n()) %>%
+  full_join(snow_eff, by="station_id") %>%
+  mutate(snow_days = replace_na(snow_days, 0)) %>%
+  mutate(days_active = eff + snow_days) %>%
+# remove data from cameras active less than 'min_eff' days
+  filter(eff >= min_eff)
+dat <- dat %>%
+  filter(station_id %in% eff$station_id)
+ind.dat <- ind.dat %>%
+  filter(station_id %in% eff$station_id)
+sta <- sta %>%
+  filter(station_id %in% eff$station_id)
+
 
 # Count the number of camera stations
 n_sta <- length(unique(eff$station_id))
@@ -98,32 +156,27 @@ getmode <- function(v) {
 
 # Acknowledgements
 
-
 # Table of Contents
-
 
 # Executive Summary
 
-
 # Introduction
-## Project Scope
 
+## Project Scope
 
 ## Background
 
-
 ## Objectives
 
-
 # Methods
-## Study Area
 
+## Study Area
 
 ## Camera Field Study
 
-Cameras were deployed in June 2021 at `r n_sta` unique locations.
+As of `r format(as.Date(start), "%B %Y")`, cameras were active at `r n_sta` unique locations. 
 
-```{r map, fig.height=8, fig.width=6, echo=F, fig.cap= "Camera deployment sites."}
+```{r map, fig.height=8, fig.width=6.5, echo=F, fig.cap= "Camera deployment sites."}
 
 m <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="satellite") %>%  # Add satellite data
@@ -144,7 +197,25 @@ m <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) 
 
 m
 
+allcams <- sta %>% 
+  arrange(station_id) %>%
+  select(longitude, latitude) %>% 
+  as.matrix()
+
+cam_dist <- raster::pointDistance(allcams, allcams, lonlat=T, allpairs = T)
+colnames(cam_dist) <- sort(sta$station_id)
+
+cam_dist <- as_tibble(cam_dist) %>%
+  mutate(station_id1 = sort(sta$station_id)) %>%
+  pivot_longer(cols = c(-station_id1), names_to = "station_id2", values_to = "dist") %>%
+  filter(station_id1 != station_id2) %>%
+  group_by(station_id1) %>%
+  slice_min(dist)
+
 ```
+
+Cameras were spaced a mean of `r round(mean(cam_dist$dist))` m from the next nearest camera (± `r round(sd(cam_dist$dist)/sqrt(n_sta),1)` m standard error; range `r round(min(cam_dist$dist))` to `r round(max(cam_dist$dist))` m). Camera effort totaled `r sum(eff$eff)` days across all cameras with a mean of `r round(mean(eff$eff))` active days per camera (± `r round(sd(eff$eff)/sqrt(n_sta),1)` SE; range `r min(eff$eff)` to `r max(eff$eff)`).
+
 
 # Results
 
@@ -152,10 +223,14 @@ m
 
 To date, `r nrow(dat)` images have undergone classification by species, sex, age, behaviour, and groups size. In total, `r length(levels(factor(dat$species)))-1` species were detected (excluding unknown species). The following figure summarizes detections by species.
 
-```{r detections, echo=F, fig.height=sp.height, fig.width=6}
+```{r detections, echo=F, fig.height=sp.height, fig.width=6.5, fig.cap= "Total detections of each species and proportions of sites each species was detected at."}
 layout(matrix(c(1,1,2), 1, 3, byrow = TRUE))
-det.sum.total <- as.data.frame(count(dat[is.na(dat$species)==FALSE,], report_names))
-det.sum.total <- det.sum.total[order(det.sum.total$n),]
+det.sum.total <- dat %>%
+  filter(!is.na(report_names)) %>%
+  group_by(report_names) %>%
+  summarize(n = n(),
+            locations = NA) %>%
+  arrange(n)
 
 i <-1
 for(i in 1:nrow(det.sum.total))
@@ -164,33 +239,46 @@ for(i in 1:nrow(det.sum.total))
   det.sum.total$locations[i] <- length(unique(tmp$station_id))
 }
 
-par(mar=c(5,16,1,1))
-barplot(det.sum.total$n, names.arg = paste0(det.sum.total$report_names, 
-                                           " (n = ", det.sum.total$n, ", ",
-                                           round((det.sum.total$locations/n_sta)*100),
-                                           "%)"), 
-        las=1, cex.names=1, xlab="Total detections", horiz=T)
+par(mar = c(5, 16, 1, 1))
+barplot(
+  det.sum.total$n,
+  names.arg = paste0(
+    det.sum.total$report_names,
+    " (n = ",
+    det.sum.total$n,
+    ", ",
+    round((det.sum.total$locations /
+             n_sta) * 100),
+    "%)"
+  ),
+  las = 1,
+  cex.names = 1,
+  xlab = "Total detections",
+  horiz = T,
+  xlim = c(0, (ceiling(
+    max(det.sum.total$n, na.rm = T) / 5000
+  ) * 5000))
+)
 
 par(mar=c(5,1,1,1))
 
-barplot(det.sum.total$locations/n_sta, las=1, cex.names=1, xlab="Proportion of sites detected", horiz=T, xlim=c(0,1))
-abline(v=1, lty=2)
+barplot(det.sum.total$locations/n_sta*100, las=1, cex.names=1, xlab="Percentage of sites detected", horiz=T, xlim=c(0,100))
+abline(v=100, lty=2)
 
 
 ```
 
-
 **Detection Map**
 
-```{r detection map, fig.width=6, fig.height=8, echo=F, fig.cap="A map of stations from which images were recovered. Circle size corresponds to the number of images recovered from the site."}
+```{r detection map, fig.width=6.5, fig.height=8, echo=F, fig.cap="A map of stations from which images were recovered. Circle size corresponds to the number of animal detections per unit camera effort."}
 
 sta.det <- dat %>%
   filter(!(report_names %in% c(irr_spe))) %>%
   group_by(station_id) %>%
   summarize(det = n()) %>%
   distinct() %>%
-  left_join(eff %>% select(-latitude, -longitude), by="station_id") %>%
-  mutate(cr = det/days*100)
+  left_join(eff, by="station_id") %>%
+  mutate(cr = det/eff*100)
 
 sta.det <- full_join(sta, sta.det, by = "station_id")
 
@@ -217,10 +305,11 @@ m_det
 
 Using an independence threshold of `r independent` minutes, the number of independent capture events is `r nrow(ind.dat)`. The rest of the analyses are conducted with this data. A summary of image events is as follows:
 
-```{r ind detections figure, echo=F, eval=T, fig.width=6, fig.height=sp.height}
+```{r ind detections figure, echo=F, eval=T, fig.width=6.5, fig.height=sp.height, fig.cap="Total independent detection events and total animals counted by species."}
 
 layout(matrix(c(1,1,2), 1, 3, byrow = TRUE))
-ind.det.sum.total <- as.data.frame(count(ind.dat, report_names))
+ind.det.sum.total <- as.data.frame(count(ind.dat, report_names)) %>%
+  filter(!is.na(report_names))
 ind.det.sum.total <- ind.det.sum.total[order(ind.det.sum.total$n),]
 ind.det.sum.total <- left_join(ind.det.sum.total, det.sum.total[,c(1,3)], by="report_names")
 
@@ -232,17 +321,36 @@ for(i in 1:nrow(ind.det.sum.total))
 }
 
 par(mar=c(5,16,1,1))
-barplot(ind.det.sum.total$n, names.arg = paste0(ind.det.sum.total$report_names,
-                                           " (n = ", ind.det.sum.total$n, ", ",
-                                           # ind.det.sum.total$animal_count, ",", 
-                                           round(ind.det.sum.total$locations/n_sta*100), "%)"),
-        las=1, cex.names=1, xlab="Total independent detections", horiz=T,
-        xlim=c(0,2500))
+barplot(
+  ind.det.sum.total$n,
+  names.arg = paste0(
+    ind.det.sum.total$report_names,
+    " (n = ",
+    ind.det.sum.total$n,
+    ", ",
+    ind.det.sum.total$animal_count,
+    ")"
+  ),
+  las = 1,
+  cex.names = 1,
+  xlab = "Total independent detections",
+  horiz = T,
+  xlim = c(0, (ceiling(
+    max(ind.det.sum.total$n, na.rm = T) / 500
+  ) * 500))
+)
 
-par(mar=c(5,1,1,1))
-
-
-barplot(ind.det.sum.total$animal_count, las=1, cex.names=1, xlab="Total animals counted", horiz=T, xlim = c(0,3000))
+par(mar = c(5, 1, 1, 1))
+barplot(
+  ind.det.sum.total$animal_count,
+  las = 1,
+  cex.names = 1,
+  xlab = "Total animals counted",
+  horiz = T,
+  xlim = c(0, (ceiling(
+    max(ind.det.sum.total$animal_count, na.rm = T) / 500
+  ) * 500))
+)
 
 
 ```
@@ -271,8 +379,7 @@ tmp <- tmp[c(2:nrow(tmp),1),]
 
 ```
 
-
-```{r sex ind plot, echo=F, fig.width=6, fig.height=sp.height}
+```{r sex ind plot, echo=F, fig.width=6.5, fig.height=sp.height, fig.cap="Sex composition of independent detection events by species."}
 if(plot==TRUE)
 {
 layout(matrix(c(1,1,1,2), 1, 4, byrow = TRUE))
@@ -307,7 +414,7 @@ if(length(colnames(ind.dat)[colnames(ind.dat)==col.name]>0))
 
 ```
 
-```{r age ind plot, echo=F, fig.width=6, fig.height=sp.height}
+```{r age ind plot, echo=F, fig.width=6.5, fig.height=sp.height, fig.cap="Age composition of independent detection events by species."}
 if(plot==TRUE)
 {
 layout(matrix(c(1,1,1,2), 1, 4, byrow = TRUE))
@@ -328,7 +435,8 @@ if(length(colnames(ind.dat)[colnames(ind.dat)==col.name]>0))
       tmp <- table(ind.dat[,col.name][!(ind.dat$report_names %in% irr_spe)], as.character(ind.dat$report_names[!(ind.dat$report_names %in% irr_spe)]))
       tmp <- as.data.frame.matrix(tmp)
       tmp$total <- rowSums(tmp)
-      tmp <- tmp[tmp$total != 0 , 1:10]
+      tmp <- tmp[tmp$total != 0,]
+      tmp$total <- NULL
 
       
       ind.dat[,col.name]<- factor(ind.dat[,col.name])
@@ -343,7 +451,7 @@ if(length(colnames(ind.dat)[colnames(ind.dat)==col.name]>0))
   }
 ```
 
-```{r behaviour ind plot, echo=F, fig.width=6, fig.height=sp.height}
+```{r behaviour ind plot, echo=F, fig.width=6.5, fig.height=sp.height, fig.cap="Behaviours observed in independent detection events by species."}
 if(plot==TRUE)
 {
 layout(matrix(c(1,1,1,2), 1, 4, byrow = TRUE))
@@ -354,9 +462,10 @@ plot.new()
 legend("topleft", legend=row.names(tmp), fill=cols, xpd=TRUE, cex=1.1 )
 } else { print('Not included') }
 ```
+
 **Independent detection map**
 
-```{r independent map, fig.width=6, fig.height=8, echo=F}
+```{r independent map, fig.width=6.5, fig.height=8, echo=F, fig.cap="Count of independent detection events by station. Circle diameter corresponds to event count per unit camera effort."}
 
 sta.deti <- ind.dat %>%
   filter(!(report_names %in% c(irr_spe))) %>%
@@ -364,12 +473,12 @@ sta.deti <- ind.dat %>%
   summarize(det = n(),
             animals = sum(event_groupsize)) %>%
   distinct() %>%
-  left_join(eff %>% select(-latitude, -longitude), by="station_id") %>%
-  mutate(cr = det/days*100)
+  left_join(eff, by="station_id") %>%
+  mutate(cr = det/eff*100)
 
 sta.deti <- full_join(sta, sta.deti, by = "station_id")
 
-scale <- 15
+scale <- 20
 
 m_deti <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
@@ -388,12 +497,11 @@ m_deti
 
 ```
 
-
 **Site-level species covariance**
 
-This plot shows the co variance between different species at the site level for species with >5 unique detections. A positive value indicates that the two species commonly occur at the same sites, while a negative value indicates that the two species are rarely present at the same site.
+This plot shows the co variance between different species at the site level for species with \>5 unique detections. A positive value indicates that the two species commonly occur at the same sites, while a negative value indicates that the two species are rarely present at the same site.
 
-```{r covariance, echo=F, fig.width=6, fig.height=sp.height, eval=T}
+```{r covariance, echo=F, fig.width=6, fig.height=sp.height, eval=T, fig.cap="Covariance of independent detections by species."}
 par(mfrow=c(1,1))
 tmp <- as.data.frame.matrix(table(ind.dat$station_id, ind.dat$report_names))
 tmp <- tmp[colSums(tmp)>5]
@@ -415,7 +523,7 @@ corrplot(M, method="color", col=rev(pnw_palette(pal, 100, type="continuous")),
 
 **Distance sampling**
 
-```{r distance hist, fig.width=6, fig.height=3.5}
+```{r distance hist, fig.width=6, fig.height=3.5, fig.cap="Distances recorded for focal species.", echo=F}
 # Filter to focal species
 dist <- dat %>%
   filter(!is.na(distance),
@@ -431,7 +539,7 @@ dist %>%
 
 **Group size distribution**
 
-```{r group size, echo=F, eval=T, fig.width=6, fig.height=4}
+```{r group size, echo=F, eval=T, fig.width=6, fig.height=4, fig.cap="Elk group size distribution by sex."}
 ind.dat %>%
   filter(report_names == "Elk") %>%
   group_by(sex) %>%
@@ -452,7 +560,7 @@ ind.dat %>%
 
 **Detection maps**
 
-```{r elk detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+```{r elk detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE, fig.cap="Independent elk detection events by station. Circle diameter corresponds to event count per unit camera effort."}
 
 sta.det.elk <- ind.dat %>%
   filter(report_names=="Elk") %>%
@@ -460,8 +568,8 @@ sta.det.elk <- ind.dat %>%
   summarize(det = n(),
             animals = sum(event_groupsize)) %>%
   distinct() %>%
-  left_join(eff %>% select(-latitude, -longitude), by="station_id") %>%
-  mutate(cr = det/days*100)
+  left_join(eff, by="station_id") %>%
+  mutate(cr = det/eff*100)
 
 sta.det.elk <- inner_join(sta, sta.det.elk, by = "station_id")
 
@@ -483,17 +591,21 @@ m_det.elk <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomCont
              color="white")
 m_det.elk
 
+# mean(sta.det.elk$cr)
+# sd(sta.det.elk$cr)/sqrt(nrow(sta.det.elk))
+
 ```
 
-```{r elk age detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+```{r elk age detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE, fig.cap="Independent elk detection events by age composition by station. Circle diameter corresponds to event count per unit camera effort."}
 
 age.det.elk <- ind.dat %>%
   filter(report_names=="Elk") %>%
+  mutate(age = if_else(age =="Juvenile", "Adult + Juvenile", age)) %>%
   group_by(station_id, age) %>%
   summarize(det = n()) %>%
   distinct() %>%
-  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
-  mutate(cr = det/days*100)
+  left_join(eff, by="station_id") %>%
+  mutate(cr = det/eff*100)
 
 age.det.elk <- inner_join(sta,age.det.elk, by = "station_id")
 cols <- pnw_palette(pal, 2)
@@ -502,7 +614,7 @@ scale <- 100
 
 m_age.elk <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
-   
+
   addCircles(lng=age.det.elk$longitude[age.det.elk$age=="Adult"],
              lat=age.det.elk$latitude[age.det.elk$age=="Adult"],
              radius=as.numeric(age.det.elk$cr[age.det.elk$age=="Adult"])*scale,
@@ -519,32 +631,36 @@ m_age.elk <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomCont
              color=cols[2],
              label=paste(age.det.elk$station_id, 
                          age.det.elk$det, sep=", ")) %>%
-    addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
+  
+  addCircles(lng=sta.det$longitude, lat=sta.det$latitude,
              radius=1,
              weight=1, fillOpacity = 1,
              color="white") %>%
+
   addLegend("bottomleft", colors = c(cols),  
-           labels = c("Adults", "Adults + Juveniles"),
-           title = "Age category",
-           labFormat = labelFormat(prefix = "$"), 
-           opacity = 1)
+            labels = c("Adults", "Adults + Juveniles"),
+            title = "Age category",
+            labFormat = labelFormat(prefix = "$"), 
+            opacity = 1)
 
 m_age.elk
 
+# nrow(age.det.elk[age.det.elk$age != "Adult",])
+
 ```
 
-```{r elk seasonal detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+```{r elk seasonal detection map, fig.width=3, fig.height=4, echo=F, message=FALSE, warning=FALSE, fig.cap="Independent elk detection events by station and season. Circle diameter corresponds to event count per unit camera effort."}
 seas.elk <- ind.dat %>%
   filter(report_names=="Elk") %>%
   group_by(station_id, season) %>%
   summarize(det = n()) %>%
   distinct() %>%
   left_join(seas.eff, by=c("station_id", "season")) %>%
-  mutate(cr = det/days*100)
+  mutate(cr = det/eff*100)
 
 seas.elk <- inner_join(sta,seas.elk, by = "station_id")
 
-scale <- 80
+scale <- 120
 
 m_summer.elk <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>% 
@@ -585,6 +701,26 @@ m_winter.elk <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomC
              color="white")
   
   m_winter.elk
+  
+  
+seas.elk %>% group_by(season) %>% summarize(mean_cr = mean(cr), SE = sd(cr)/sqrt(n()), n = n())
+
+# look at elevation
+elev <- read_csv("~/GIS/Cameras/camera_elevations.txt") %>%
+  mutate(Name = str_replace(Name, "SP", "SPCS")) %>%
+  filter(!(Name %in% stations_to_exclude)) %>%
+  select(station_id = Name,
+         elevation = ELEVATION)
+
+elk.elev <- ind.dat %>% 
+  filter(report_names=="Elk") %>%
+  left_join(elev, by="station_id")
+
+seas.elk <- left_join(seas.elk, elev, by="station_id")
+
+seas.elk %>% group_by(season) %>% summarize(mean_elev = weighted.mean(elevation, cr), min = min(elevation), max = max(elevation))
+
+print(summary(aov(elevation ~ season, data = elk.elev)))
 
 ```
 
@@ -634,12 +770,11 @@ m_collars
 
 ```
 
-
 #### Deer
 
 **Detection maps**
 
-```{r deer detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+```{r deer detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE, fig.cap="Independent deer detection events by station. Circle diameter corresponds to event count per unit camera effort."}
 
 sta.det.deer <- ind.dat %>%
   filter(report_names=="Deer") %>%
@@ -647,8 +782,8 @@ sta.det.deer <- ind.dat %>%
   summarize(det = n(),
             animals = sum(event_groupsize)) %>%
   distinct() %>%
-  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
-  mutate(cr = det/days*100)
+  left_join(eff, by="station_id") %>%
+  mutate(cr = det/eff*100)
 
 sta.det.deer <- inner_join(sta, sta.det.deer, by = "station_id")
 
@@ -671,15 +806,16 @@ m_det.deer
 
 ```
 
-```{r deer age detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+```{r deer age detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE, fig.cap="Independent deer detection events by age composition by station. Circle diameter corresponds to event count per unit camera effort."}
 
 age.det.deer <- ind.dat %>%
   filter(report_names=="Deer") %>%
+  mutate(age = if_else(age =="Juvenile", "Adult + Juvenile", age)) %>%
   group_by(station_id, age) %>%
   summarize(det = n()) %>%
   distinct() %>%
-  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
-  mutate(cr = det/days*100)
+  left_join(eff, by="station_id") %>%
+  mutate(cr = det/eff*100)
 
 age.det.deer <- inner_join(sta,age.det.deer, by = "station_id")
 
@@ -716,7 +852,7 @@ m_age.deer
 
 ```
 
-```{r deer seasonal detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+```{r deer seasonal detection map, fig.width=3, fig.height=4, echo=F, message=FALSE, warning=FALSE, fig.cap="Independent deer detection events by station and season. Circle diameter corresponds to event count per unit camera effort."}
 
 seas.deer <- ind.dat %>%
   filter(report_names=="Deer") %>%
@@ -724,11 +860,11 @@ seas.deer <- ind.dat %>%
   summarize(det = n()) %>%
   distinct() %>%
   left_join(seas.eff, by=c("station_id", "season")) %>%
-  mutate(cr = det/days*100)
+  mutate(cr = det/eff*100)
 
 seas.deer <- inner_join(sta,seas.deer, by = "station_id")
 
-scale <- 35
+scale <- 50
 
 m_summer.deer <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>% 
@@ -773,15 +909,15 @@ m_winter.deer <- leaflet(options = leafletOptions(attributionControl=FALSE, zoom
 
 #### Bears
 
-```{r bear detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+```{r bear detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE, fig.cap="Independent black bear detection events by station. Circle diameter corresponds to event count per unit camera effort."}
 
 sta.det.bear <- ind.dat %>%
-  filter(report_names=="Bears") %>%
+  filter(report_names=="Black bears") %>%
   group_by(station_id) %>%
   summarize(det = n()) %>%
   distinct() %>%
-  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
-  mutate(cr = det/days*100)
+  left_join(eff, by="station_id") %>%
+  mutate(cr = det/eff*100)
 
 sta.det.bear <- inner_join(sta, sta.det.bear, by = "station_id")
 
@@ -803,16 +939,16 @@ m_det.bear
 
 ```
 
-
-```{r bear age detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+```{r bear age detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE, fig.cap="Independent black bear detection events by age composition by station. Circle diameter corresponds to event count per unit camera effort."}
 
 age.det.bear <- ind.dat %>%
-  filter(report_names=="Bears") %>%
+  filter(report_names=="Black bears") %>%
+  mutate(age = if_else(age =="Juvenile", "Adult + Juvenile", age)) %>%
   group_by(station_id, age) %>%
   summarize(det = n()) %>%
   distinct() %>%
-  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
-  mutate(cr = det/days*100)
+  left_join(eff, by="station_id") %>%
+  mutate(cr = det/eff*100)
 
 age.det.bear <- inner_join(sta,age.det.bear, by = "station_id")
 
@@ -840,7 +976,7 @@ m_age.bear <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomCon
              radius=1,
              weight=1, fillOpacity = 1,
              color="white") %>%
-  addLegend("bottomleft", colors = col.cat[c(1, 9)],  
+  addLegend("bottomleft", colors = c(cols),  
            labels = c("Adults", "Adults + Juveniles"),
            title = "Age category",
            labFormat = labelFormat(prefix = "$"), 
@@ -849,7 +985,6 @@ m_age.bear <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomCon
 m_age.bear
 
 ```
-
 
 #### Capture rates
 
@@ -868,13 +1003,12 @@ for(i in 1:nrow(det.sum.site))
 }
 
 # Join with the station effort
-CR.site <- left_join(det.sum.site,aggregate(days~station_id, data=eff,  FUN=sum, na.rm=T) )
-CR.site$CR.100 <- round((CR.site$individuals/CR.site$days)*100,3)
+CR.site <- left_join(det.sum.site,aggregate(eff~station_id, data=eff,  FUN=sum, na.rm=T) )
+CR.site$CR.100 <- round((CR.site$individuals/CR.site$eff)*100,3)
 # Add station locations
 CR.site <- left_join(CR.site, sta[, c("station_id", "latitude", "longitude")])
 
 ```
-
 
 **Monthly Capture Rates**
 
@@ -895,12 +1029,16 @@ i<-1
 for(i in 1:nrow(mon.dat))
 {
   mon.dat$effort[i] <- nrow(subset(row.lookup, substr(row.lookup$date,1,7)==mon.dat$month[i]))
+  mon.dat$season[i] <- ind.dat$season[substr(ind.dat$date_time,1,7)==mon.dat$month[i]][1]
   mon.dat$total.CR[i] <- (nrow(subset(ind.dat, substr(ind.dat$date_time,1,7)==mon.dat$month[i]))/mon.dat$effort[i])*100
 }
 
+# add colors for seasons
+mon.dat$cols <- if_else(mon.dat$season == "Winter", cols[1], cols[2])
+
 #exclude months with all cameras active for <5 days
 mon.dat <- mon.dat %>%
-  filter(effort >= 280)
+  filter(effort >= (n_sta*5))
 
 for(i in 1:length(foc_spe))
 {
@@ -918,36 +1056,36 @@ mon.dat <- mon.dat[is.infinite(mon.dat$total.CR)==F,]
 
 ```
 
-```{r monthly CR plot, echo=F, eval=T, fig.width=8, fig.height=4}
+```{r monthly CR plot, echo=F, eval=T, fig.width=8, fig.height=3, fig.cap="Camera effort (left) and capture rate of all species (right) per month."}
 
-par(mfrow=c(1,2))
+par(mfrow=c(1,2), mar = c(3,4,1,1))
 
-plot(mon.dat$timestamp, mon.dat$effort, ylab="Monthly effort (days)", xlab="Date", type="l", las=1, xaxt="n")
+plot(mon.dat$timestamp, mon.dat$effort, ylab="Effort (camera days)", xlab="Date", type="l", las=1, xaxt="n")
 points(mon.dat$timestamp, mon.dat$effort, pch=19, col=rgb(0,0,0,0.4))
-axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                                 as.Date(max(row.lookup$date, na.rm=T)),"months"),
                              "%Y-%m-%d")), 
-     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+     labels = format.Date(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),
+                                 as.Date(max(row.lookup$date, na.rm=T)),
                               "months"),"%b"),
      cex.axis = 0.8)
 
 # Overall capture rate
-plot(mon.dat$timestamp, mon.dat$total.CR, ylab="Monthly total CR per 100 days", xlab="Date", type="l", las=1, ylim=c(0, max(mon.dat$total.CR)), xaxt = "n")
+plot(mon.dat$timestamp, mon.dat$total.CR, ylab="Events per 100 days", xlab="Date", type="l", las=1, ylim=c(0, max(mon.dat$total.CR)), xaxt = "n")
 points(mon.dat$timestamp, mon.dat$total.CR, pch=19, col=rgb(0,0,0,0.4))
-axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                                 as.Date(max(row.lookup$date, na.rm=T)),"months"),
                              "%Y-%m-%d")), 
-     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+     labels = format.Date(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),
+                                 as.Date(max(row.lookup$date, na.rm=T)),
                               "months"),"%b"),
      cex.axis = 0.8)
 
@@ -962,17 +1100,17 @@ Species level variation in monthly capture rates are as follows:
 col.cat <- pnw_palette(pal, length(foc_spe))
 
 plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
-     c(0, max(mon.dat[,3:(2+length(foc_spe))])+5), las=1, ylab="Capture Rate per 100 days",  
+     c(0, max(mon.dat[,3:(2+length(foc_spe))])+5), las=1, ylab="Events per 100 days",  
      xlab="", type="n", yaxt="n", xaxt="n")
-axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                                 as.Date(max(row.lookup$date, na.rm=T)),"months"),
                              "%Y-%m-%d")), 
-     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+     labels = format.Date(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),
+                                 as.Date(max(row.lookup$date, na.rm=T)),
                               "months"),"%b"),
      cex.axis = 0.8)
 
@@ -989,77 +1127,91 @@ for(i in 1:length(foc_spe))
 
 ```
 
-```{r elk CR}
+```{r elk CR, echo = F, fig.height=4, fig.width=6, fig.cap="Capture rate of independent elk detection events per 100 days by month"}
+par(mar = c(3,4,3,1))
 plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
-     c(0, ceiling(max(mon.dat$Elk)+1)), main="Elk", las=1, ylab="Capture Rate per 100 days",  
+     c(0, ceiling(max(mon.dat$Elk)+1)), main="Elk", las=1, ylab="Events per 100 days",  
      xlab="", type="n", yaxt="n", xaxt="n")
-axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                                 as.Date(max(row.lookup$date, na.rm=T)),"months"),
                              "%Y-%m-%d")), 
-     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+     labels = format.Date(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),
+                                 as.Date(max(row.lookup$date, na.rm=T)),
                               "months"),"%b"),
      cex.axis = 0.8)
 axis(2, at = seq(0, ceiling(max(mon.dat$Elk)), 1))
   lines(mon.dat$timestamp, mon.dat$Elk,  type="l", lwd=1.5)
-  points(mon.dat$timestamp, mon.dat$Elk, pch=19, cex=0.8)
-```
-```{r bears CR}
-plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
-     c(0, ceiling(max(mon.dat$Bears)+1)), main="Bears", las=1, ylab="Capture Rate per 100 days",  
-     xlab="", type="n", yaxt="n", xaxt="n")
-axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
-                                                           na.rm=T),
-                                                       1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
-                             "%Y-%m-%d")), 
-     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
-                                                           na.rm=T),
-                                                       1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),
-                              "months"),"%b"),
-     cex.axis = 0.8)
-axis(2, at = seq(0, ceiling(max(mon.dat$Bears)), 1))
-  lines(mon.dat$timestamp, mon.dat$Bears,  type="l", lwd=1.5)
-  points(mon.dat$timestamp, mon.dat$Bears, pch=19, cex=0.8)
+  points(mon.dat$timestamp, mon.dat$Elk, pch=19,  cex=1, col=mon.dat$cols)
+  legend("topright", legend = unique(mon.dat$season), col = unique(mon.dat$cols), pch = 19, bty = "n")
+  
+mon.dat %>% group_by(season) %>% summarize(mean = mean(Elk), SE = sd(Elk)/sqrt(n()))
+
+# check correlation
+print(summary(aov(Elk ~ season, data = mon.dat)))
+  
 ```
 
-```{r Deer CR}
+```{r bears CR, echo = F, fig.height=3, fig.width=4, fig.cap="Capture rate of independent black bear detection events per 100 days by month"}
+par(mar = c(3,4,3,1))
 plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
-     c(0, ceiling(max(mon.dat$Deer)+1)), main="Deer", las=1, ylab="Capture Rate per 100 days",  
+     c(0, ceiling(max(mon.dat$'Black bears')+1)), main="Black bears", las=1, ylab="Events per 100 days",  
      xlab="", type="n", yaxt="n", xaxt="n")
-axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                                 as.Date(max(row.lookup$date, na.rm=T)),"months"),
                              "%Y-%m-%d")), 
-     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+     labels = format.Date(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),
+                                 as.Date(max(row.lookup$date, na.rm=T)),
+                              "months"),"%b"),
+     cex.axis = 0.8)
+axis(2, at = seq(0, ceiling(max(mon.dat$'Black bears')), 1))
+  lines(mon.dat$timestamp, mon.dat$'Black bears',  type="l", lwd=1.5)
+  points(mon.dat$timestamp, mon.dat$'Black bears', pch=19,  cex=1, col=mon.dat$cols)
+  legend("topright", legend = unique(mon.dat$season), col = unique(mon.dat$cols), pch = 19, bty = "n")  
+```
+
+```{r Deer CR, echo = F, fig.height=3, fig.width=4, fig.cap="Capture rate of independent deer detection events per 100 days by month"}
+par(mar = c(3,4,3,1))
+plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
+     c(0, ceiling(max(mon.dat$Deer)+1)), main="Deer", las=1, ylab="Events per 100 days",  
+     xlab="", type="n", yaxt="n", xaxt="n")
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(row.lookup$date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(row.lookup$date, na.rm=T)),"months"),
+                             "%Y-%m-%d")), 
+     labels = format.Date(seq(as.Date(paste0(substr(min(row.lookup$date,
+                                                           na.rm=T),
+                                                       1,7),"-01")),
+                                 as.Date(max(row.lookup$date, na.rm=T)),
                               "months"),"%b"),
      cex.axis = 0.8)
 axis(2, at = seq(0, ceiling(max(mon.dat$Deer)), 2))
   lines(mon.dat$timestamp, mon.dat$Deer,  type="l", lwd=1.5)
-  points(mon.dat$timestamp, mon.dat$Deer, pch=19, cex=0.8)
+  points(mon.dat$timestamp, mon.dat$Deer, pch=19,  cex=1, col=mon.dat$cols)
+  legend("topright", legend = unique(mon.dat$season), col = unique(mon.dat$cols), pch = 19, bty = "n")  
 ```
 
 ### Other Species
+
 #### Bobcat
 
-```{r bobcat detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+```{r bobcat detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE, fig.cap="Independent bobcat detection events by station. Circle diameter corresponds to event count per unit camera effort."}
 
 sta.det.bobcat <- ind.dat %>%
   filter(report_names=="Bobcats") %>%
   group_by(station_id) %>%
   summarize(det = n()) %>%
   distinct() %>%
-  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
-  mutate(cr = det/days*100)
+  left_join(eff, by="station_id") %>%
+  mutate(cr = det/eff*100)
 
 sta.det.bobcat <- inner_join(sta, sta.det.bobcat, by = "station_id")
 
@@ -1081,37 +1233,39 @@ m_det.bobcat
 
 ```
 
-```{r Bobcats CR}
+```{r Bobcats CR, echo = F, fig.height=3, fig.width=4, fig.cap="Capture rate of independent bobcat detection events per 100 days by month"}
+par(mar = c(3,4,3,1))
 plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
-     c(0, ceiling(max(mon.dat$Bobcats))), main="Bobcats", las=1, ylab="Capture Rate per 100 days",  
+     c(0, ceiling(max(mon.dat$Bobcats))), main="Bobcats", las=1, ylab="Events per 100 days",  
      xlab="", type="n", yaxt="n", xaxt="n")
-axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                                 as.Date(max(row.lookup$date, na.rm=T)),"months"),
                              "%Y-%m-%d")), 
-     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+     labels = format.Date(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),
+                                 as.Date(max(row.lookup$date, na.rm=T)),
                               "months"),"%b"),
      cex.axis = 0.8)
 axis(2, at = seq(0, ceiling(max(mon.dat$Bobcats)), 0.1))
   lines(mon.dat$timestamp, mon.dat$Bobcats,  type="l", lwd=1.5)
-  points(mon.dat$timestamp, mon.dat$Bobcats, pch=19, cex=0.8)
+  points(mon.dat$timestamp, mon.dat$Bobcats, pch=19,  cex=1, col=mon.dat$cols)
+  legend("topright", legend = unique(mon.dat$season), col = unique(mon.dat$cols), pch = 19, bty = "n")  
 ```
 
 #### Coyote
 
-```{r coyote detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
-
+```{r coyote detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE, fig.cap="Independent coyote detection events by station. Circle diameter corresponds to event count per unit camera effort."}
+par(mar = c(3,4,3,1))
 sta.det.coyote <- ind.dat %>%
   filter(report_names=="Coyotes") %>%
   group_by(station_id) %>%
   summarize(det = n()) %>%
   distinct() %>%
-  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
-  mutate(cr = det/days*100)
+  left_join(eff, by="station_id") %>%
+  mutate(cr = det/eff*100)
 
 sta.det.coyote <- inner_join(sta, sta.det.coyote, by = "station_id")
 
@@ -1133,42 +1287,44 @@ m_det.coyote
 
 ```
 
+```{r Coyotes CR, echo = F, fig.height=3, fig.width=4, fig.cap="Capture rate of independent coyote detection events per 100 days by month"}
+par(mar = c(3,4,3,1))
 
-```{r Coyotes CR}
 plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
-     c(0, ceiling(max(mon.dat$Coyotes))), main="Coyotes", las=1, ylab="Capture Rate per 100 days",  
+     c(0, ceiling(max(mon.dat$Coyotes))), main="Coyotes", las=1, ylab="Events per 100 days",  
      xlab="", type="n", yaxt="n", xaxt="n")
-axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                                 as.Date(max(row.lookup$date, na.rm=T)),"months"),
                              "%Y-%m-%d")), 
-     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+     labels = format.Date(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),
+                                 as.Date(max(row.lookup$date, na.rm=T)),
                               "months"),"%b"),
      cex.axis = 0.8)
 axis(2, at = seq(0, ceiling(max(mon.dat$Coyotes)), 0.5))
   lines(mon.dat$timestamp, mon.dat$Coyotes,  type="l", lwd=1.5)
-  points(mon.dat$timestamp, mon.dat$Coyotes, pch=19, cex=0.8)
+  points(mon.dat$timestamp, mon.dat$Coyotes, pch=19,  cex=1, col=mon.dat$cols)
+  legend("topright", legend = unique(mon.dat$season), col = unique(mon.dat$cols), pch = 19, bty = "n")  
 ```
 
 #### Wolf
 
-```{r wolf detection map, fig.width=6, fig.height=8, echo=F, message=FALSE, warning=FALSE}
+```{r wolf detection map, echo=FALSE, fig.cap="Independent coyote detection events by station. Circle diameter corresponds to event count per unit camera effort.", fig.height=8, fig.width=6, message=FALSE, warning=FALSE}
 
 sta.det.wolf <- ind.dat %>%
   filter(report_names=="Wolves") %>%
   group_by(station_id) %>%
   summarize(det  = n()) %>%
   distinct() %>%
-  left_join(eff %>% select(-longitude, -latitude), by="station_id") %>%
-  mutate(cr = det/days*100)
+  left_join(eff, by="station_id") %>%
+  mutate(cr = det/eff*100)
 
 sta.det.wolf <- inner_join(sta, sta.det.wolf, by = "station_id")
 
-scale <- 1000
+scale <- 2000
 
 m_det.wolf <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
@@ -1186,26 +1342,27 @@ m_det.wolf
 
 ```
 
+```{r Wolves CR, echo=FALSE, fig.cap="Capture rate of independent coyote detection events per 100 days by month", fig.height=3, fig.width=4}
+par(mar = c(3,4,3,1))
 
-
-```{r Wolves CR}
 plot(c(min(mon.dat$timestamp, na.rm=T), max(mon.dat$timestamp, na.rm=T)),
-     c(0, max(mon.dat$Wolves)), main="Wolves", las=1, ylab="Capture Rate per 100 days",  
+     c(0, max(mon.dat$Wolves)), main="Wolves", las=1, ylab="Events per 100 days",  
      xlab="", type="n", yaxt="n", xaxt="n")
-axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
+axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
+                                 as.Date(max(row.lookup$date, na.rm=T)),"months"),
                              "%Y-%m-%d")), 
-     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
+     labels = format.Date(seq(as.Date(paste0(substr(min(row.lookup$date,
                                                            na.rm=T),
                                                        1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),
+                                 as.Date(max(row.lookup$date, na.rm=T)),
                               "months"),"%b"),
      cex.axis = 0.8)
 axis(2, at = seq(0, max(mon.dat$Wolves), 0.05))
   lines(mon.dat$timestamp, mon.dat$Wolves,  type="l", lwd=1.5)
-  points(mon.dat$timestamp, mon.dat$Wolves, pch=19, cex=0.8)
+  points(mon.dat$timestamp, mon.dat$Wolves, pch=19,  cex=1, col=mon.dat$cols)
+  legend("topright", legend = unique(mon.dat$season), col = unique(mon.dat$cols), pch = 19, bty = "n")  
 ```
 
 ### Human data
@@ -1216,9 +1373,10 @@ human.dat <- ind.dat %>%
   group_by(station_id) %>%
   summarize(events = n(),
             most_popular=as.character(getmode(behaviour)))
+
 human.sta <- human.dat %>%
   full_join(sta, by="station_id") %>%
-  mutate(most_popular = if_else(is.na(most_popular), "NA", most_popular))
+  mutate(most_popular = if_else(is.na(most_popular), NA, most_popular))
 
 human.sta$most_popular <- factor(human.sta$most_popular)
 
@@ -1227,7 +1385,7 @@ human.sta$cols <- col.cat[human.sta$most_popular]
 
 ```
 
-```{r human map, fig.width=6, fig.height=8, echo=F}
+```{r human map, fig.width=6, fig.height=8, echo=F, fig.cap="Independent human detection events by station. Circle diameter corresponds to event count per unit camera effort. Circle color indicates the most common human use type observed."}
 
 m_hum <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=F)) %>%
   addProviderTiles(providers$Esri.WorldImagery, group="satellite") %>%  # Add satellite data
@@ -1236,7 +1394,7 @@ m_hum <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=
                    lat = human.sta$latitude,
                    fillColor = human.sta$cols, 
                    color=human.sta$cols,
-                   radius = (if_else(is.na(human.sta$events), 200,
+                   radius = (if_else(is.na(human.sta$events), 0,
                                      200+human.sta$events*50)),
                    weight=0.5,
                    fillOpacity = 0.5,
@@ -1247,8 +1405,8 @@ m_hum <- leaflet(options = leafletOptions(attributionControl=FALSE, zoomControl=
              weight=1, fillOpacity = 1,
              color="white") %>%
   
- addLegend("bottomleft", colors = c(col.cat[c(1,2,4)], col.cat[3]),  
-           labels = c(levels(human.sta$most_popular)[c(1,2,4)], "NA"),
+ addLegend("bottomleft", colors = c(col.cat[seq(1,length(levels(human.sta$most_popular)))]),  
+           labels = c(levels(human.sta$most_popular)),
            title = "Most popular activity",
            labFormat = labelFormat(prefix = "$"), 
            opacity = 1)
@@ -1257,6 +1415,7 @@ m_hum
 ```
 
 # Appendix A
+
 ## Species names
 
 ```{r species names, echo=F, include=T}
@@ -1273,20 +1432,19 @@ flextable(species.names, cwidth = c(1.5, 3, 1.5))
 ```
 
 # Appendix B
+
 ## Classification definitions
 
 # Appendix C
+
 ## Camera activity
 
-```{r cam activity, echo=F, fig.height=9, fig.width=6}
-n_sta <- 56
-
-eff <- left_join(eff, snow_eff %>% select(-end_date, -snow_days), by="station_id")
+```{r cam activity, echo=F, fig.height=9, fig.width=6.5}
 
 # Adjust layout
 par(mar=c(2,6,1,1))
-plot(c(min(eff$start_date, na.rm=T), 
-       max(eff$end_date, na.rm=T)), 
+plot(c(min(row.lookup$date, na.rm=T), 
+       max(row.lookup$date+1, na.rm=T)), 
        c(1,n_sta+5), las=1, ylab="", xlab="", type="n", yaxt="n", xaxt="n")
 
 # Have the first station plot at the top 
@@ -1294,146 +1452,174 @@ plot.order <- rev(unique(eff$station_id))
 
 axis(2, at= 1:n_sta, labels= plot.order, las=1, cex.axis=0.6)
 col.cat <- pnw_palette("Bay", 4)
-legend("topright", c("Active", "Active, covered in snow"), lwd = c(2, 3), col = c("black", col.cat[2]))
 
 # Vertical lines for months
-abline(v=as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
-                                                           na.rm=T),
-                                                       1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
-                             "%Y-%m-%d")), col=rgb(0,0,0,0.1))
+abline(v = 
+  seq(as.Date(paste0(
+    substr(min(row.lookup$date,
+               na.rm = T),
+           1, 7), "-01"
+  )),
+  as.Date(max(
+    row.lookup$date, na.rm = T
+  ))+1, "months"), col = rgb(0, 0, 0, 0.1))
 
-axis(1, at = as.numeric(strptime(seq(as.Date(paste0(substr(min(eff$start_date,
-                                                           na.rm=T),
-                                                       1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),"months"),
-                             "%Y-%m-%d")), 
-     labels = format.Date(seq(as.Date(paste0(substr(min(eff$start_date,
-                                                           na.rm=T),
-                                                       1,7),"-01")),
-                                 as.Date(max(eff$end_date, na.rm=T)),
-                              "months"),"%b"),
-     cex.axis = 0.8)
-
+axis(
+  1,
+  at = seq(as.Date(paste0(
+      substr(min(row.lookup$date,
+                 na.rm = T),
+             1, 7), "-01"
+    )),
+    as.Date(max(
+      row.lookup$date, na.rm = T
+    ))+1, "months"),
+  labels = format.Date(seq(
+    as.Date(paste0(substr(
+      min(row.lookup$date,
+          na.rm = T),
+      1, 7
+    ), "-01")),
+    as.Date(max(row.lookup$date, na.rm = T))+1,
+    "months"
+  ), "%b"),
+  cex.axis = 0.8
+)
 
 mtext("Station ID", 2, 4, cex = 1)
 # Make lines for each of the cameras
 for(i in 1:length(plot.order))
 {
   abline(h=i, col=rgb(0,0,0,0.1))
-  tmp <- eff[eff$station_id==plot.order[i],]
+  tmp <- row.lookup[row.lookup$station_id==plot.order[i],]
   for(j in 1:nrow(tmp))
     {
-      lines(c(tmp$start_date[j],
-                       tmp$end_date[j]),
+      lines(c(tmp$date[j],
+                       tmp$date[j]+days(1)),
             c(i,i), lwd=2)
   }
 }
 
 for(i in 1:length(plot.order))
 {
-  tmp <- eff[eff$station_id==plot.order[i],]
-  for(j in 1:nrow(tmp))
-    {
-     if(tmp$covered_period[j] == 1)
-    {
-      lines(c(tmp$pause1[j],
-              tmp$resume1[j]),
-            c(i,i), lwd=3, col=col.cat[2])
-    }
-  if(tmp$covered_period[j] == 2)
-    {
-      lines(c(tmp$pause1[j],
-              tmp$resume1[j]),
-            c(i,i), lwd=3, col=col.cat[2])
-      lines(c(tmp$pause2[j],
-              tmp$resume2[j]),
-            c(i,i), lwd=3, col=col.cat[2])
-    }
-  if(tmp$covered_period[j] == 3)
-    {
-      lines(c(tmp$pause1[j],
-              tmp$resume1[j]),
-            c(i,i), lwd=3, col=col.cat[2])
-      lines(c(tmp$pause2[j],
-              tmp$resume2[j]),
-            c(i,i), lwd=3, col=col.cat[2])
-      lines(c(tmp$pause3[j],
-              tmp$resume3[j]),
-            c(i,i), lwd=3, col=col.cat[2])
-    }  
-  if(tmp$covered_period[j] == 4)
-    {
-      lines(c(tmp$pause1[j],
-              tmp$resume1[j]),
-            c(i,i), lwd=3, col=col.cat[2])
-      lines(c(tmp$pause2[j],
-              tmp$resume2[j]),
-            c(i,i), lwd=3, col=col.cat[2])
-      lines(c(tmp$pause3[j],
-              tmp$resume3[j]),
-            c(i,i), lwd=3, col=col.cat[2])
-      lines(c(tmp$pause4[j],
-              tmp$resume4[j]),
-            c(i,i), lwd=3, col=col.cat[2])
+  tmp <- snow.lookup[snow.lookup$station_id == plot.order[i],]
+  for (j in 1:nrow(tmp))
+  {
+    if (nrow(tmp) > 0) {
+      lines(c(tmp$date[j],
+              tmp$date[j] + days(1)),
+            c(i, i),
+            lwd = 4,
+            col = "dodgerblue2")
     }
   }
 }
 
-
+# legend
+legend("topright", inset = 1/50, c("Active", "Active, covered in snow"), lwd = c(2, 4), col = c("black", "dodgerblue2"))
 
 ```
 
 # Appendix D
+
 ## Detection check
 
 ```{r det species colors, include=F}
 library(stringr)
 # Make species colour codes
-tmp3 <- data.frame("species"=str_sort(unique(dat$report_names)),"Colour"= as.character(pnw_palette(pal, length(unique(dat$report_names)))))
+species.colors <-
+  data.frame("species" = str_sort(unique(dat$report_names[!is.na(dat$report_names)])),
+             "Colour" = as.character(pnw_palette(pal, length(
+               unique(dat$report_names[!is.na(dat$report_names)])
+             ))))
 
 ```
 
-```{r detecion summary, echo=F, message=F, warning=F, fig.width=6, fig.height=8}
+```{r detecion summary, echo=F, message=F, warning=F, fig.width=6.5, fig.height=9}
 
 # Make a separate plot for each station
 # To do this make a plot dataframe
-tmp4 <- data.frame("station_id"=rev(plot.order), "Plot.grp"=ceiling(1:length(unique(eff$station_id))/20))
+tmp_plot <-
+  data.frame("station_id" = rev(plot.order),
+             "Plot.grp" = ceiling(1:length(unique(eff$station_id)) / 20))
 
 
-eff <- left_join(eff,tmp4, by="station_id")
+tmp_eff_plot <- left_join(eff, tmp_plot, by = "station_id")
 i <- 1
 j <- 1
-for(j in 1:length(unique(eff$Plot.grp)))
+for (j in 1:length(unique(tmp_eff_plot$Plot.grp)))
 {
-    layout(matrix(c(1,1,1,2), 1, 4, byrow = TRUE))
-    par(mar=c(2,6,1,1))
-    
-    plot(c(min(eff$start_date, na.rm=T), max(eff$end_date, na.rm=T)),      c(1,length(unique(eff$station_id[eff$Plot.grp==j]))), las=1, ylab="", xlab="", type="n", yaxt="n")
-    
-    axis(2, at= 1:length(unique(eff$station_id[eff$Plot.grp==j])), labels= unique(eff$station_id[eff$Plot.grp==j]), las=1, cex.axis=1)
-    #mtext("Camera Deployment ID", 2, 4)
-    # Make lines for each of the cameras
-    for(i in 1:length(unique(eff$station_id[eff$Plot.grp==j])))
-    {
-      abline(h=i, col=rgb(0,0,0,0.1))
-      tmp <- eff[eff$station_id==unique(eff$station_id[eff$Plot.grp==j])[i],]
-      
-      tmp2 <- dat[dat$station_id==tmp$station_id[1],]
-      tmp2 <- left_join(tmp2, tmp3, by = c("report_names"= "species"))
-      points(tmp2$date_time, rep(i,nrow(tmp2)), pch="|", col= tmp2$Colour)
-    
-      for(k in 1:nrow(tmp))
-        {
-          lines(c(tmp$start_date[k],
-                           tmp$end_date[k]),
-                c(i,i), lwd=2)
-        }
-      }
-    par(mar=c(0,0,1,0))
-    plot.new()
-    legend("topleft", legend=tmp3$species, fill=tmp3$Colour, xpd=TRUE, cex=1.1 )
+  tmp_sta <- rev(unique(tmp_eff_plot$station_id[tmp_eff_plot$Plot.grp == j]))
+  k <- length(tmp_sta)
+  
+  layout(matrix(c(1, 1, 1, 2), 1, 4, byrow = TRUE))
+  par(mar = c(2, 6, 1, 1))
+  
+  plot(
+    c(
+      min(row.lookup$date, na.rm = T),
+      max(row.lookup$date, na.rm = T)
+    ),
+    c(1, k),
+    las = 1,
+    ylab = "",
+    xlab = "",
+    type = "n",
+    yaxt = "n"
+  )
+  # vertical lines for months
+  abline(v = 
+  seq(as.Date(paste0(
+    substr(min(row.lookup$date,
+               na.rm = T),
+           1, 7), "-01"
+  )),
+  as.Date(max(
+    row.lookup$date, na.rm = T
+  )), "months"), col = rgb(0, 0, 0, 0.1))
 
+  axis(
+    2,
+    at = 1:k,
+    labels = tmp_sta,
+    las = 1,
+    cex.axis = 1
+  )
+  #mtext("Camera Deployment ID", 2, 4)
+  # Make lines for each of the cameras
+  for (i in 1:k)
+  {
+    abline(h = i, col = rgb(0, 0, 0, 0.1))
+    tmp_eff <- eff[eff$station_id == tmp_sta[i], ]
+    tmp_dat <- dat[dat$station_id == tmp_sta[i], ]
+    tmp_dat <-
+      left_join(tmp_dat, species.colors, by = c("report_names" = "species")) %>%
+      mutate(date_time = as.Date(date_time))
+    
+    points(tmp_dat$date_time,
+           rep(i, nrow(tmp_dat)),
+           pch = "|",
+           col = tmp_dat$Colour)
+    
+    tmp_lookup <-
+      row.lookup[row.lookup$station_id == tmp_sta[i], ]
+    for (m in 1:nrow(tmp_lookup))
+    {
+      lines(c(tmp_lookup$date[m],
+              tmp_lookup$date[m] + days(1)),
+            c(i, i), lwd = 2)
+    }
+  }
+  par(mar = c(0, 0, 1, 0))
+  plot.new()
+  legend(
+    "topleft",
+    legend = species.colors$species,
+    fill = species.colors$Colour,
+    xpd = TRUE,
+    cex = 1.1
+  )
+  
 }
 
 ```
@@ -1476,7 +1662,6 @@ Finally, this script outputs 10 useful data frames for future data analysis:
   - "`r  paste0("processed_data/",dat$project_id[1], "_",independent ,"min_Daily_total_counts.csv")`"
   
 ```
-
 
 ```{r, echo=F, eval=FALSE}
 # Only do this for species you are interested in
@@ -1556,7 +1741,6 @@ ind.dat$species <- factor(ind.dat$species)
 
 ```
 
-
 ```{r, echo=F, message=F, warning=F, eval=F}
 # Weekly format
   # Station / Month / Effort / Covariates / Species      
@@ -1594,7 +1778,6 @@ ind.dat$species <- factor(ind.dat$species)
 
 ```
 
-
 ```{r, echo=F, message=F, warning=F, eval=F}
 # Daily format
   # Station / Month / Effort / Covariates / Species      
@@ -1623,4 +1806,3 @@ ind.dat$species <- factor(ind.dat$species)
 #write.csv(day.count, paste0("processed_data/",dat$project_id[1], "_",independent ,"min_Independent_daily_counts.csv"), row.names = F) 
 
 ```
-
