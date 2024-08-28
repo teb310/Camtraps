@@ -10,6 +10,8 @@
 # 5. Cameras were active for one continuous period without breaks
 # Any additional assumptions should be simple fixes if violated
 
+# Run this code for as many years of data you have
+
 # Start of script
 # 0. Prepare R ####
 
@@ -31,9 +33,9 @@ tz = "UTC"
 
 independent <- 30
 
-# Input any months that you conducted camera checks (this will need to match up with check_date on your camera_checks file)
+# Set which year you are compiling data for (SPI likes to have survey observations split by calendar year)
 
-checks <- c("2021-09","2022-05","2022-06")
+year <- 2022
 
 # Set x  and y to choose how R should measure the time your cameras were deployed: days (D), hours (H), or minutes (M).
 # DO NOT CHANGE D, H, and M; these are constants (number of seconds in each measurement unit)
@@ -51,17 +53,18 @@ cameras <- read_csv("input/raw_data/cameras.csv")
 checks <- read_csv(paste0("input/raw_data/",proj_name,"/camera_checks.csv"))
 events <- read_csv(paste0("input/processed_data/",proj_name,"_",independent,"min_Independent.csv"))
 stations <- read_csv(paste0("input/raw_data/",proj_name,"_station_data.csv"))
+daily_lookup <- read_csv(paste0("input/processed_data/",proj_name,"_daily_effort_lookup.csv"))
 
-# Create lookup for camera label vs. station ID (SPI likes to use camera label for some reason)
-# 'checks' has this info
-# some stations used >1 camera -> start and end dates will help us know which was used when
+# Let's first create an effort dataframe with each camera and station that were working this calendar year.
+# We'll filter all our other data based on this
 
-station_cameras <- checks %>%
-  group_by(camera_label) %>%
-  mutate(start_use = min(check_date),
-         end_use = max(check_date)) %>%
-  select(camera_label, station_id, start_use, end_use) %>%
-  distinct()
+effort <- daily_lookup %>%
+  filter(format(date, "%Y") == year) %>%
+  group_by(camera_label, station_id) %>%
+  summarize(total_time = n()-1,
+            start = min(date),
+            end = max(date)) %>%
+  filter(total_time>0)
 
 # 1. Camera information ####
 
@@ -74,17 +77,17 @@ camera_info <- checks %>%
   arrange(check_date) %>%
   distinct(camera_label, .keep_all = TRUE) %>%
   # join with camera data and station data
+  inner_join(effort, by=c("camera_label", "station_id")) %>%
   inner_join(cameras %>% select(camera_label, camera_model, camera_comments), by="camera_label") %>%
   inner_join(stations %>% select(station_id, longitude, latitude, site_comments), by="station_id") %>%
+  # add comment to indicate station ID
+  mutate(site_comments = if_else(is.na(site_comments), paste("Station", station_id), (paste0(site_comments, "; Station ", station_id)))) %>%
   # alter name of model variable
-  rename(model = camera_model)
+  rename(model = camera_model) %>%
+  # arrange to assist looking for >1 cam at 1 station
+  arrange(station_id, camera_label)
 
 # if 2 cameras have the same station_id (because one replaced the other), note in comments
-# first arrange by station_id and check_date to put original cameras one record above replacement cameras
-camera_info <- camera_info %>%
-  arrange(station_id, check_date)
-
-# now check if a record has the same station ID as the previous record, and note name of camera being replaced
 for(i in 2:nrow(camera_info))
 {
   if(camera_info$station_id[i] == camera_info$station_id[i-1])
@@ -93,9 +96,9 @@ for(i in 2:nrow(camera_info))
     # if comments has data in it already, keep it and add your note after a ';'
     if(is.na(camera_info$camera_comments[i]))
     {
-      camera_info$camera_comments[i] <- paste0("Replaced ", z)
+      camera_info$camera_comments[i] <- paste("Replaced", z, "on", camera_info$check_date[i])
     } else {
-      camera_info$camera_comments[i] <- paste0(camera_info$camera_comments[i], "; Replaced ", z)
+      camera_info$camera_comments[i] <- paste0(camera_info$camera_comments[i], "; Replaced ", z, " on ", camera_info$check_date[i])
     }
   }
 }
@@ -144,7 +147,7 @@ camera_info <- camera_info %>%
 
 ## Write to .csv ####
 
-write.table(camera_info, "output/SPI/camera_information.csv", col.names = FALSE, row.names = FALSE, sep = ",", na = "")
+write.table(camera_info, paste0("output/SPI/camera_information_", year ,".csv"), col.names = FALSE, row.names = FALSE, sep = ",", na = "")
 
 # Locate file in output folder
 
@@ -161,41 +164,16 @@ write.table(camera_info, "output/SPI/camera_information.csv", col.names = FALSE,
 # 2. Camera setup & checks ####
 ## Prepare data ####
 
-# Separate initial deployment dates out
-deployment <- checks %>%
-  arrange(check_date) %>%
-  distinct(camera_label, .keep_all = TRUE) %>%
-  select(camera_label, start_date = check_date)
 camera_setup_checks <- checks %>%
-  inner_join(deployment, by="camera_label")
-
-# Separate out cameras with only one record (new cameras with no image data) and add comment
-camera_setup_checks <- camera_setup_checks %>%
-  group_by(camera_label) %>%
-  count() %>%
-  inner_join(camera_setup_checks, by="camera_label")
-
-new_cams <- camera_setup_checks %>%
-  filter(n == 1) %>%
-  mutate(comments = "New camera, no images recovered yet",
-         end_date = start_date) %>%
-  select(-check_date, -camera_check_tbl_id)
-
-# Set up start and end dates for other cameras
-camera_setup_checks <- camera_setup_checks %>%  
-  filter(check_date != start_date) %>%
-  group_by(camera_label) %>%
-  arrange(camera_label, check_date) %>%
-  mutate(end_date = if_else(is.na(stop_date), max(check_date), stop_date)) %>%
-  select(-check_date, -camera_check_tbl_id) %>%
-  distinct() %>%
-  filter(end_date == min(end_date)) %>%
-  bind_rows(new_cams)
+  group_by(camera_label, station_id) %>%
+  slice_min(check_date) %>%
+  inner_join(effort, by=c("camera_label", "station_id")) %>%
+  mutate(comments = paste("Station", station_id))
 
 # if 2 cameras have the same station_id (because one replaced the other), note in comments
 # first arrange by station_id and check_date to put original cameras one record above replacement cameras
 camera_setup_checks <- camera_setup_checks %>%
-  arrange(station_id, start_date)
+  arrange(station_id, start)
 
 # now check if a record has the same station ID as the previous record, and note name of camera being replaced
 for(i in 2:nrow(camera_setup_checks))
@@ -206,29 +184,24 @@ for(i in 2:nrow(camera_setup_checks))
     # if comments has data in it already, keep it and add your note after a ';'
     if(is.na(camera_setup_checks$comments[i]))
     {
-      camera_setup_checks$comments[i] <- paste0("Replaced ", z)
+      camera_setup_checks$comments[i] <- paste("Replaced", z, "on", camera_setup_checks$start[i])
     } else {
-      camera_setup_checks$comments[i] <- paste0(camera_setup_checks$comments[i], "; Replaced ", z)
+      camera_setup_checks$comments[i] <- paste0(camera_setup_checks$comments[i], "; Replaced ", z, " on ", camera_setup_checks$start[i])
     }
   }
 }
-
-# Set up total time column
-
-camera_setup_checks <- camera_setup_checks %>%
-  mutate(
-    total_time = (int_length(start_date %--% end_date) / x))
 
 ## Format to SPI standards ####
 
 # Fix date format
 camera_setup_checks$date <-
-  format(as.Date(camera_setup_checks$start_date, tz = tz, "%Y-%m-%d"), "%d %b %Y")
+  format(as.Date(camera_setup_checks$start, tz = tz, "%Y-%m-%d"), "%d %b %Y")
 camera_setup_checks$end_date <-
-  format(as.Date(camera_setup_checks$end_date, tz = tz, "%Y-%m-%d"), "%d %b %Y")
+  format(as.Date(camera_setup_checks$end, tz = tz, "%Y-%m-%d"), "%d %b %Y")
 
 # Organize columns
 camera_setup_checks <- camera_setup_checks %>%
+  ungroup() %>%
   add_column(
     study_area_name = study_area, 
     time = NA, 
@@ -259,7 +232,7 @@ camera_setup_checks <- camera_setup_checks %>%
 
 ## Write to .csv ####
 
-write.table(camera_setup_checks, "output/SPI/camera_setup_checks.csv", col.names = FALSE, row.names = FALSE, sep = ",", na = "")
+write.table(camera_setup_checks, paste0("output/SPI/camera_setup_checks_",year,".csv"), col.names = FALSE, row.names = FALSE, sep = ",", na = "")
 
 # File can be found in WD
 
@@ -283,14 +256,16 @@ image_data <- events %>%
   add_column(sequence_definition = independent) %>%
   # SPI wants date and time in separate columns
   separate(date_time, c("date", "time"), sep = " ") %>%
-  # join to station_id/camera_label lookup
-  inner_join(station_cameras, by="station_id") %>%
+  # join to effort to match up camera_labels
+  inner_join(effort, by="station_id", relationship = "many-to-many") %>%
+  # filter to the start and end dates listed
+  filter(as.Date(date) >= start, as.Date(date) <= end) %>%
   # we will adjust the 'count' value to reflect group count
-  # If you used a certain value to mean unknown group count, convert value to 0 below
-  mutate(count = if_else(count==100, 0, count)) %>%
+  # If you used a certain value to mean unknown group count, convert value to 1 below
+  mutate(count = if_else(count==100, 1, count),
+         group_count = if_else(is.na(group_count), 1, group_count)) %>%
   # take the higher of group count and count fields to be official count
   mutate(count = if_else(count > group_count, count, group_count))
-
 
 # Fix date format
 image_data$date <- format(parse_date(image_data$date), "%d %b %Y")
@@ -302,7 +277,7 @@ sort(unique(image_data$species))
 image_data <- image_data %>%
   mutate(
     species_code = case_when(
-      str_detect(species, regex("Bird spp.", ignore_case = TRUE)) ~ "B",
+      str_detect(species, regex("Bird spp.", ignore_case = TRUE)) ~ "AVES",
       str_detect(species, regex("Canis familiaris", ignore_case = TRUE)) ~ "M-CAFA",
       str_detect(species, regex("Canis latrans", ignore_case = TRUE)) ~ "M-CALA",
       str_detect(species, regex("Canis lupus", ignore_case = TRUE)) ~ "M-CALU",
@@ -311,17 +286,21 @@ image_data <- image_data %>%
       str_detect(species, regex("Homo sapiens", ignore_case = TRUE)) ~ "M-HOSA",
       str_detect(species, regex("Lepus americanus", ignore_case = TRUE)) ~ "M-LEAM",
       str_detect(species, regex("Lynx rufus", ignore_case = TRUE)) ~ "M-LYRU",
-      str_detect(species, regex("Mus spp.", ignore_case = TRUE)) ~ "NULL",
+      str_detect(species, regex("Mus spp.", ignore_case = TRUE)) ~ "RODENTIA",
       str_detect(species, regex("Odocoileus hemionus", ignore_case = TRUE)) ~ "M-ODHE",
       str_detect(species, regex("Procyon lotor", ignore_case = TRUE)) ~ "M-PRLO",
       str_detect(species, regex("Tamiasciurus douglasii", ignore_case = TRUE)) ~ "M-TADO",
       str_detect(species, regex("Ursus americanus", ignore_case = TRUE)) ~ "M-URAM",
-      str_detect(species, regex("Unknown species", ignore_case = TRUE)) ~ "NULL"))
+      str_detect(species, regex("Ursus arctos", ignore_case = TRUE)) ~ "M-URAR",
+      str_detect(species, regex("Unknown species", ignore_case = TRUE)) ~ "NULL")) %>%
+  filter(species_code != "NULL")
 
 ## Activity codes ####
 image_data <- image_data %>%
   mutate(
+    # human transport mode
     human_transport_mode_code = case_when(
+      species_code == "M-HOSA" ~ case_when(
       str_detect(behaviour, regex("hiking", ignore_case = TRUE)) ~ "OF",
       str_detect(behaviour, regex("mountain biking", ignore_case = TRUE)) ~ "NPB",
       str_detect(behaviour, regex("horse", ignore_case = TRUE)) ~ "OH",
@@ -329,7 +308,7 @@ image_data <- image_data %>%
       str_detect(behaviour, regex("motorbike", ignore_case = TRUE)) ~ "ORV",
       str_detect(behaviour, regex("snowmobile", ignore_case = TRUE)) ~ "ORV",
       str_detect(behaviour, regex("truck/car", ignore_case = TRUE)) ~ "SPV",
-      str_detect(behaviour, regex("unknown vehicle", ignore_case = TRUE)) ~ "DC")) %>%
+      str_detect(behaviour, regex("unknown vehicle", ignore_case = TRUE)) ~ "DC"))) %>%
   mutate(
     activity_code = if_else(species_code == "M-HOSA", as.character(NA),
                             case_when(
@@ -345,11 +324,9 @@ image_data <- image_data %>%
 image_data <- image_data %>%
   mutate(
     # only get age codes for non-human IDs
-    age = if_else(species_code=="M-HOSA", as.character(NA),
-                  # mixed age IDs are easier to deal with if we shorten to 'AJ'
-                  if_else(age=="Adult + Juvenile", "AJ", age)),
+    age = if_else(species_code=="M-HOSA", as.character(NA), age),
     life_stage_code = case_when(
-      age=="AJ" ~ "AJ",
+      str_detect(age, regex("Adult + Juvenile", ignore_case = TRUE)) ~ "AJ",
       str_detect(age, regex("Sub-adult", ignore_case = TRUE)) ~ "S",
       str_detect(age, regex("Adult", ignore_case = TRUE)) ~ "A",
       str_detect(age, regex("Juvenile", ignore_case = TRUE)) ~ "J",
@@ -358,12 +335,23 @@ image_data <- image_data %>%
 ## Sex codes ####
 image_data <- image_data %>%
   mutate(
-    sex_code = if_else(species_code=="M-HOSA", as.character(NA),
-                       case_when(
-                         str_detect(sex, regex("Unknown", ignore_case = TRUE)) ~ "UC",
-                         str_detect(sex, regex("Female", ignore_case = TRUE)) ~ "F",
-                         str_detect(sex, regex("Male", ignore_case = TRUE)) ~ "M",
-                         str_detect(sex, regex("Mixed", ignore_case = TRUE)) ~ "MF")))
+    # NA for humans
+    sex_code = if_else(
+      species_code == "M-HOSA",
+      as.character(NA),
+      # UC for juveniles
+      if_else(
+        life_stage_code == "J",
+        "UC",
+        # else shorten
+        case_when(
+          str_detect(sex, regex("Unknown", ignore_case = TRUE)) ~ "UC",
+          str_detect(sex, regex("Female", ignore_case = TRUE)) ~ "F",
+          str_detect(sex, regex("Male", ignore_case = TRUE)) ~ "M",
+          str_detect(sex, regex("Mixed", ignore_case = TRUE)) ~ "MF"
+        )
+      )
+    ))
 
 ### Group composition ####
 # NOTE: THIS SECTION CAN BE MADE MUCH SIMPLER BY STICKING TO ONE METHOD AND USING IT ON EVERY ID WITH >1 INDIVIDUAL
@@ -371,6 +359,7 @@ image_data <- image_data %>%
 # Two styles used in our data: 
 # 1. females are x, males are y, juveniles are z (e.g., 'xxxyyz')
 # 2. list form (e.g. 3 females, 1 male, 2 juveniles)
+# 3. Using F, M, and J rather than full words
 image_data <- image_data %>%
   mutate(
     # remove any punctuation so that stringr can find consecutive x's or y's or z's (e.g. if you separated letters by commas)
@@ -378,23 +367,57 @@ image_data <- image_data %>%
     # change any written out numbers to digits (adjust if any additional numbers are written out)
     comments = str_replace(comments, "one", "1"),
     # extract number based on style used, then convert NAs to zero so that we can add them up
-    adult_females = if_else(str_detect(comments, "x{2,}|y{2,}|z{2,}"),
-                            as.numeric(str_count(comments, "x")),
-                            as.numeric(str_extract(comments, "\\d{1,2}(?= fem)"))),
+    adult_females = if_else(
+      str_detect(comments, "(?<=[xyzu])[xyzu]|[xyzu](?=[xyzu])"),
+      # if the xyzu method was used, search for x's
+      as.numeric(str_count(comments, "x")),
+      # else look for the word "females" preceded by digits
+      if_else(
+        str_detect(comments, "\\d{1,2}(?= female)"),
+        as.numeric(str_extract(comments, "\\d{1,2}(?= fem)")),
+        # else look for a digit before F
+        as.numeric(str_extract(comments, "\\d{1,2}(?= F)"))
+      )
+    ), 
+    # if none of those produced numbers, then make it 0
     adult_females = replace_na(adult_females, 0),
-    adult_males = if_else(str_detect(comments, "x{2,}|y{2,}|z{2,}"),
-                          as.numeric(str_count(comments, "y")),
-                          as.numeric(str_extract(comments, "\\d{1,2}(?= mal)"))),
+    # repeat for males
+    adult_males = if_else(
+      str_detect(comments, "(?<=[xyzu])[xyzu]|[xyzu](?=[xyzu])"),
+      as.numeric(str_count(comments, "y")),
+      if_else(
+        str_detect(comments, "\\d{1,2}(?= male)"),
+        as.numeric(str_extract(comments, "\\d{1,2}(?= male)")),
+        as.numeric(str_extract(comments, "\\d{1,2}(?= M)"))
+      )
+    ), 
     adult_males = replace_na(adult_males, 0),
-    juvenile_uc = if_else(str_detect(comments, "x{2,}|y{2,}|z{2,}"),
-                          as.numeric(str_count(comments, "z")),
-                          as.numeric(str_extract(comments, "\\d{1,2}(?= juv)"))),
-    juvenile_uc = replace_na(juvenile_uc, 0),
-    adult_uc = as.numeric(str_extract(comments, "\\d{1,2}(?= unk)")),
+    # repeat for juvs
+    juv_uc = if_else(
+      str_detect(comments, "(?<=[xyzu])[xyzu]|[xyzu](?=[xyzu])"),
+      as.numeric(str_count(comments, "z")),
+      if_else(
+        str_detect(comments, "\\d{1,2}(?= juv)"),
+        as.numeric(str_extract(comments, "\\d{1,2}(?= juv)")),
+        as.numeric(str_extract(comments, "\\d{1,2}(?= J)"))
+      )
+    ), 
+    juv_uc = replace_na(juv_uc, 0),
+    # repeat for UC
+    adult_uc = if_else(
+      str_detect(comments, "(?<=[xyzu])[xyzu]|[xyzu](?=[xyzu])"),
+      as.numeric(str_count(comments, "u")),
+      if_else(
+        str_detect(comments, "\\d{1,2}(?= unk)"),
+        as.numeric(str_extract(comments, "\\d{1,2}(?= unk)")),
+        as.numeric(str_extract(comments, "\\d{1,2}(?= U)"))
+      )
+    ), 
     adult_uc = replace_na(adult_uc, 0)) %>%
+      
   # create a variable summing your class counts so far
-  mutate(class_sum = adult_females+adult_males+juvenile_uc+adult_uc) %>%
-  
+  mutate(class_sum = adult_females+adult_males+juv_uc+adult_uc) %>%
+    
   # Next, we'll assume simple group compositions if comments don't specify
   # if only one age/sex class is ID'd, use count. Otherwise, assume 1 individual of each age/sex class in ID is present
   mutate(
@@ -402,21 +425,21 @@ image_data <- image_data %>%
                             adult_females,
                             if_else(life_stage_code=="A" & sex_code =="F", 
                                     count,
-                                    if_else(count==2 & str_detect(sex_code, "F") | count==3 & life_stage_code=="AJ" & sex_code=="MF",
+                                    if_else(str_detect(sex_code, "F") | life_stage_code=="AJ" & sex_code=="MF",
                                             1,
                                             0))),
     adult_males = if_else(class_sum>0, 
                           adult_males,
                           if_else(life_stage_code=="A" & sex_code =="M", 
                                   count,
-                                  if_else(count==2 & str_detect(sex_code, "M") | count==3 & life_stage_code=="AJ" & sex_code=="MF",
+                                  if_else(str_detect(sex_code, "M") | life_stage_code=="AJ" & sex_code=="MF",
                                           1,
                                           0))),
-    juvenile_uc = if_else(class_sum>0, 
-                          juvenile_uc,
+    juv_uc = if_else(class_sum>0, 
+                          juv_uc,
                           if_else(life_stage_code=="J", 
                                   count,
-                                  if_else(count==2 & life_stage_code=="AJ" | count==3 & life_stage_code=="AJ" & sex_code=="MF",
+                                  if_else(life_stage_code=="AJ",
                                           1,
                                           0))),
     adult_uc = if_else(class_sum>0,
@@ -430,7 +453,7 @@ image_data <- image_data %>%
                     if_else(life_stage_code=="UC"& sex_code=="UC",
                             count, 0)))%>%
   # update class sums
-  mutate(class_sum = adult_females+adult_males+juvenile_uc+adult_uc+uc_uc) %>%
+  mutate(class_sum = adult_females+adult_males+juv_uc+adult_uc+uc_uc) %>%
   # update uc_uc to account for unidentified individuals
   mutate(uc_uc = if_else(class_sum < count, uc_uc+(count-class_sum), uc_uc),
          class_sum = NULL)
@@ -439,34 +462,34 @@ image_data <- image_data %>%
 image_data$class_sum <- image_data %>%
   select(adult_females:uc_uc) %>%
   rowSums()
+
 image_data %>% filter(class_sum != count) %>% relocate(count, .after=class_sum) %>% view()
 # if any class sums are higher than count -> adjust count to match (i.e. assume class sum is more accurate)
 image_data <- image_data %>%
   mutate(count = if_else(class_sum > count, class_sum, count))
 
+#replace any NAs in human obs
+image_data$count <- replace_na(image_data$count, 1)
+
 # check to make sure everything went as planned
 view(image_data)
-image_data$check <- image_data %>%
-  select(adult_females:uc_uc) %>%
-  rowSums(na.rm = F)
-image_data %>% filter(check != count) %>% relocate(count, .after=check) %>% view()
 
 # Save for future use:
-write.csv(image_data, paste0("input/processed_data/",proj_name, "_SPI_image_data_full.csv"))
+write.csv(image_data, paste0("input/processed_data/",proj_name, "_SPI_image_data_full_",year,".csv"))
 
 ## Format to SPI standards ####
 
 # remove zeros from adult_females:uc_uc
-image_data <- image_data %>% 
-  mutate(across(adult_females:uc_uc, na_if, 0))
+sequence_image_data <- image_data %>% 
+  mutate(across(adult_females:uc_uc, ~na_if(.,0)))
 
-image_data <- image_data %>%
+sequence_image_data <- sequence_image_data %>%
   mutate(
     # SPI doesn't accept mixed age or sex codes
     sex_code = ifelse(sex_code == "MF" | life_stage_code == "AJ", NA, sex_code),
     life_stage_code = na_if(life_stage_code, "AJ"),
-    juvenile_male = NA,
-    juvenile_female = NA,
+    juv_male = NA,
+    juv_female = NA,
     yearling_males = NA,
     yearling_females = NA,
     yearling_uc = NA,
@@ -479,7 +502,7 @@ image_data <- image_data %>%
     comments = NA)
 
 # Organize columns
-image_data <- image_data %>%
+sequence_image_data <- sequence_image_data %>%
   select(
     study_area_name,
     camera_label,
@@ -494,9 +517,9 @@ image_data <- image_data %>%
     adult_males,
     adult_females,
     adult_uc,
-    juvenile_male,
-    juvenile_female,
-    juvenile_uc,
+    juv_male,
+    juv_female,
+    juv_uc,
     yearling_males,
     yearling_females,
     yearling_uc,
@@ -512,11 +535,9 @@ image_data <- image_data %>%
     comments) %>%
   arrange(camera_label, date, time)
 
-sequence_image_data <- image_data
-
 ## Write to .csv ####
 
-write.table(sequence_image_data, "output/SPI/sequence_image_data.csv", na = "", row.names = FALSE, col.names = FALSE, sep = ",")
+write.table(sequence_image_data, paste0("output/SPI/sequence_image_data_",year,".csv"), na = "", row.names = FALSE, col.names = FALSE, sep = ",")
 
 # File can be found in WD
 
