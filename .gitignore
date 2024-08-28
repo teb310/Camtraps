@@ -1,0 +1,55 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.csv
+CamTrap_Basic_Report.docx
+CamTrap_Basic_Report_files/figure-docx/age ind plot-1.png
+CamTrap_Basic_Report_files/figure-docx/behaviour ind plot-1.png
+CamTrap_Basic_Report_files/figure-docx/collars-1.png
+CamTrap_Basic_Report_files/figure-docx/covariance-1.png
+CamTrap_Basic_Report_files/figure-docx/deer age detection map-1.png
+CamTrap_Basic_Report_files/figure-docx/deer detection map-1.png
+CamTrap_Basic_Report_files/figure-docx/detection map-1.png
+CamTrap_Basic_Report_files/figure-docx/detections-1.png
+CamTrap_Basic_Report_files/figure-docx/distance hist-1.png
+CamTrap_Basic_Report_files/figure-docx/elk age detection map-1.png
+CamTrap_Basic_Report_files/figure-docx/elk detection map-1.png
+CamTrap_Basic_Report_files/figure-docx/elk seasonal detection map-1.png
+CamTrap_Basic_Report_files/figure-docx/elk seasonal detection map-2.png
+CamTrap_Basic_Report_files/figure-docx/group size-1.png
+CamTrap_Basic_Report_files/figure-docx/ind detections figure-1.png
+CamTrap_Basic_Report_files/figure-docx/independent map-1.png
+CamTrap_Basic_Report_files/figure-docx/map-1.png
+CamTrap_Basic_Report_files/figure-docx/sex ind plot-1.png
+CamTrap_Basic_Report_Mar5.docx
+cSMR.RData
+Distance_sampling_2021_to_2023.html
+Distance_sampling_files/figure-html/activity-1.png
+Distance_sampling_files/figure-html/exploration-1.png
+Distance_sampling_files/figure-html/exploration-2.png
+Distance_sampling_files/figure-html/exploration-3.png
+Distance_sampling_files/figure-html/exploration-4.png
+DS_elk_2021_to_2023.RData
+DS_elk_2023.RData
+DS_elk_models_2021_to_2023.RData
+DS_elk_models_2022.RData
+DS_elk_models_2022_to_2023.RData
+DS_elk_models_2023.RData
+DS_key_functions.jpg
+elk_cSMR.jag
+elk_cSMR_trapeff.jag
+input/processed_data/SPCS_standard_input.RData
+input/processed_data/timelapse_images_idents_exp.xlsx
+input/timelapse_images_idents_exp.xlsx
+Lillooet_SPI.R
+output/SMR/elk_cSMR_Summer2021_8KIt_SpatialDensity.PNG
+output/SMR/elk_cSMR_Summer2022_8KIt_SpatialDensity.PNG
+output/SMR/elk_cSMR_Winter 2022_8KIt_SpatialDensity.PNG
+output/SMR/elk_cSMR_Winter2023_8KIt_SpatialDensity.PNG
+output/SMR/mc.elk_2022_to_23_eff_cSMR_8KIt_map.RData
+output/SMR/mc.elk_Summer2021_eff_cSMR_8KIt_map.RData
+output/SMR/mc.elk_Summer2022_eff_cSMR_8KIt_map.RData
+output/SMR/mc.elk_Winter2022_eff_cSMR_8KIt_map.RData
+output/SMR/mc.elk_Winter2023_eff_cSMR_8KIt_map.RData
+WildCo_to_Timelapse.R
